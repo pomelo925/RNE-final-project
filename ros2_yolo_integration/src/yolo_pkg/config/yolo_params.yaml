@@ -1,0 +1,7 @@
+yolo:
+  conf: 0.75
+  obb_model: "object_detection_best.pt"
+  seg_model: "instance_segmentation_best.pt"
+
+image:
+  use_compressed: true
