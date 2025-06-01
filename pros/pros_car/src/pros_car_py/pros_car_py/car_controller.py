@@ -153,7 +153,7 @@ class CarController:
             # 發布控制指令
 
             elif mode == "custom_nav":
-                action_key = self.nav_processing.camera_nav_unity()
+                action_key = self.nav_processing.RGBcam_nav_unity()
 
             if self._thread_running == False:
                 action_key = "STOP"

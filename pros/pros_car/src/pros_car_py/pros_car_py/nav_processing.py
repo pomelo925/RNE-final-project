@@ -211,7 +211,7 @@ class Nav2Processing:
             action = "COUNTERCLOCKWISE_ROTATION"
         return action
 
-    def camera_nav_unity(self):
+    def RGBDcamera_nav_unity(self):
         """
         YOLO 目標資訊 (yolo_target_info) 說明：
 
@@ -268,6 +268,12 @@ class Nav2Processing:
             action = "CLOCKWISE_ROTATION"
         elif any(depth < limit_distance for depth in camera_right_depth):
             action = "COUNTERCLOCKWISE_ROTATION"
+        return action
+
+    def RGBcam_nav_unity(self):
+        yolo_target_info = self.data_processor.get_yolo_target_info()
+        print("yolo_target_info:", yolo_target_info)
+        action = "CLOCKWISE_ROTATION"
         return action
 
     def stop_nav(self):
