@@ -271,9 +271,14 @@ class Nav2Processing:
         return action
 
     def RGBcam_nav_unity(self):
-        yolo_target_info = self.data_processor.get_yolo_target_info()
-        print("yolo_target_info:", yolo_target_info)
+        yolo_detection_info = self.ros_communicator.get_latest_yolo_detection_position()
+        # print("yolo_detection_info:", yolo_detection_info)
+
         action = "CLOCKWISE_ROTATION"
+        if yolo_detection_info:
+            action = "STOP"
+        else:
+            action = "CLOCKWISE_ROTATION"
         return action
 
     def stop_nav(self):

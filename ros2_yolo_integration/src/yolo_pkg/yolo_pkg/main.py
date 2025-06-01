@@ -11,7 +11,13 @@ from std_msgs.msg import String  # Import String message type
 from yolo_pkg.load_params import LoadParams
 
 
-def menu():
+def menu(choice=None):
+    """
+    顯示選單並取得使用者選擇。
+    如果有傳入 choice 參數，則直接回傳該選項，否則要求使用者輸入。
+    """
+    if choice is not None:
+        return str(choice)
     print("Select mode:")
     print("1: Draw 3D BBox with screenshot.")
     print("2: Draw 3D BBox without screenshot.")
@@ -41,7 +47,7 @@ def main():
     )
     camera_geometry = CameraGeometry(yolo_depth_extractor)
 
-    user_input = menu()
+    user_input = menu(choice=4)
 
     try:
         while True:
@@ -92,6 +98,21 @@ def main():
                     bounding_status=True,
                     log=True,
                 )
+                
+                # 取得YOLO偵測結果
+                detected_objects = yolo_boundingbox.get_tags_and_boxes()
+                for obj in detected_objects:
+                    x1, y1, x2, y2 = obj["box"]
+                    cx = (x1 + x2) // 2
+                    cy = (y1 + y2) // 2
+                    from geometry_msgs.msg import PointStamped
+                    point_msg = PointStamped()
+                    point_msg.header.stamp = ros_communicator.get_clock().now().to_msg()
+                    point_msg.header.frame_id = "camera_link"
+                    point_msg.point.x = float(cx)
+                    point_msg.point.y = float(cy)
+                    point_msg.point.z = -1.0  # 沒有深度資訊
+                    ros_communicator.publish_data("point", point_msg)
 
             elif user_input == "5":
                 # segmentation
