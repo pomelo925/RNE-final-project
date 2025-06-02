@@ -1,15 +1,12 @@
 #!/bin/bash
-
 PORT_MAPPING=""
 if [ "$1" = "--port" ] && [ -n "$2" ] && [ -n "$3" ]; then
     PORT_MAPPING="-p $2:$3"
     shift 3  # Remove the first three arguments
 fi
-
 # 檢查系統架構
 ARCH=$(uname -m)
 OS=$(uname -s)
-
 # 適用於 x86_64 或 macOS 上的 arm64
 if [ "$ARCH" = "aarch64" ]; then
     echo "Detected architecture: arm64"
@@ -46,7 +43,6 @@ elif [ "$ARCH" = "x86_64" ] || ([ "$ARCH" = "arm64" ] && [ "$OS" = "Darwin" ]); 
             -v "$(pwd)/fps_screenshots:/workspaces/fps_screenshots" \
             registry.screamtrumpet.csie.ncku.edu.tw/screamlab/pros_cameraapi:0.0.2 \
             /bin/bash
-
         # 如果上一個指令失敗，則改用不帶 GPU 的版本
         if [ $? -ne 0 ]; then
             echo "GPU not supported or failed, falling back to CPU mode..."

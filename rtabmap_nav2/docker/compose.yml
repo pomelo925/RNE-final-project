@@ -1,0 +1,71 @@
+#############################
+###    shared settings    ###
+#############################
+x-common-settings: &common
+  build:
+    context: .
+    dockerfile: Dockerfile
+  image: pomelo925/rne:final
+
+  volumes:
+    # GUI (optional, for QT-based windows)
+    - $HOME/.Xauthority:/root/.Xauthority
+    - /tmp/.X11-unix:/tmp/.X11-unix
+
+    # shared files
+    - ../colcon_ws:/home/colcon_ws
+
+  environment:
+    - DISPLAY=${DISPLAY}
+
+  tty: true
+  stdin_open: true
+  ipc: host
+  privileged: true
+  stop_grace_period: 1s
+
+
+
+############################
+###   shared settings    ###
+############################
+x-gpu-settings: &gpu
+  deploy:
+    resources:
+      reservations:
+        devices:
+          - driver: nvidia
+            count: all
+            capabilities: [gpu]
+
+
+
+##############################
+###   Container Services   ###
+##############################
+services:
+  dev:
+    <<: [*common, *gpu]
+    container_name: dev
+    command: [ "bash" ]
+  
+  living-room:
+    <<: [*common, *gpu]
+    container_name: living-room
+    ports:
+      - "8000:8000"
+    command: [ "bash", "-c", ""]
+  
+  door-random:
+    <<: [*common, *gpu]
+    container_name: door-random
+    ports:
+      - "8000:8000"
+    command: [ "bash", "-c", ""]
+
+  pikachu:
+    <<: [*common, *gpu]
+    container_name: pikachu
+    ports:
+      - "8000:8000"
+    command: [ "bash", "-c", ""]
