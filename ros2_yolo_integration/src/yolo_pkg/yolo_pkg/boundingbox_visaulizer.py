@@ -135,6 +135,8 @@ class BoundingBoxVisualizer:
         detected_info = []
         if bounding_status:
             detected_objects = self.yolo_bounding_box.get_tags_and_boxes()
+            self.ros_communicator.publish_detection_list(detected_objects)
+
             for obj in detected_objects:
                 label = obj["label"]
                 confidence = obj["confidence"]
@@ -169,6 +171,7 @@ class BoundingBoxVisualizer:
         if not isinstance(image, np.ndarray):
             print("Processed image is not a valid numpy array.")
             return
+
         try:
             ros_image = self.image_processor.get_rgb_ros_image(image)
             self.ros_communicator.publish_data("yolo_image", ros_image)

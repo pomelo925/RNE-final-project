@@ -3,19 +3,24 @@ from pros_car_py.car_models import DeviceDataTypeEnum, CarCControl
 from geometry_msgs.msg import PoseWithCovarianceStamped, PoseStamped, Point
 from std_msgs.msg import String, Header
 from nav_msgs.msg import Path
-from sensor_msgs.msg import LaserScan, Imu
+from sensor_msgs.msg import LaserScan, Imu, CompressedImage
 from trajectory_msgs.msg import JointTrajectoryPoint
 import orjson
 from pros_car_py.ros_communicator_config import ACTION_MAPPINGS
 from geometry_msgs.msg import PointStamped
-from std_msgs.msg import String, Bool
-from std_msgs.msg import Float32MultiArray
+from std_msgs.msg import String, Bool, Int32
+from std_msgs.msg import Float32MultiArray, Int32MultiArray
 from visualization_msgs.msg import Marker
 from nav2_msgs.srv import ClearEntireCostmap
 from rclpy.action import ActionClient
 from nav2_msgs.action import NavigateToPose
 import rclpy
+import numpy as np
+import cv2
 
+
+from interfaces.msg import DetectedObjectList  
+from interfaces.msg import PointList  
 
 class RosCommunicator(Node):
     def __init__(self):
@@ -145,6 +150,18 @@ class RosCommunicator(Node):
 
         self.navigate_to_pose_action_client = ActionClient(
             self, NavigateToPose, "/navigate_to_pose"
+        )
+
+        # 訂閱 yolo
+        self.latest_yolo_detection_list = None
+        self.create_subscription(
+            DetectedObjectList, '/yolo/detection/list', self._yolo_detection_list_callback, 10
+        )
+
+        #　訂閱 polygon
+        self.latest_polygon_list = None
+        self.create_subscription(
+            PointList, '/opencv/polygon/list', self._polygon_list_callback, 10
         )
 
     def clear_received_global_plan(self):
@@ -353,3 +370,23 @@ class RosCommunicator(Node):
         marker.color.b = 0.0
 
         self.publisher_target_marker.publish(marker)
+
+    # --- YOLO 偵關 ---
+    def _yolo_detection_list_callback(self, msg):
+        self.latest_yolo_detection_list = msg
+
+    def get_latest_yolo_detection_list(self):
+        """
+        取得最新的 YOLO 偵測物件清單
+        """
+        return self.latest_yolo_detection_list
+
+    # --- Polygon 相關 ---
+    def _polygon_list_callback(self, msg):
+        self.latest_polygon_list = msg
+
+    def get_latest_polygon_list(self):
+        if self.latest_polygon_list is None:
+            self.get_logger().warn("No polygon edges data received yet.")
+            return None
+        return self.latest_polygon_list

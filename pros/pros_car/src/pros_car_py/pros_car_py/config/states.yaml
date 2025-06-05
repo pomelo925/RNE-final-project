@@ -1,0 +1,54 @@
+states:
+
+# 停留與檢測狀態
+  - name: START
+    on_enter: on_enter_START
+  - name: MID1
+    on_enter: on_enter_MID1
+  - name: MID2
+    on_enter: on_enter_MID2
+  - name: FINAL
+    on_enter: on_enter_FINAL
+
+# 移動狀態
+  - name: D11
+    on_enter: on_enter_D11
+  - name: D12
+    on_enter: on_enter_D12
+  - name: D13
+    on_enter: on_enter_D13
+  - name: D14
+    on_enter: on_enter_D14
+  - name: D21
+    on_enter: on_enter_D21
+  - name: D22
+    on_enter: on_enter_D22
+  - name: D23
+    on_enter: on_enter_D23
+  - name: D24
+    on_enter: on_enter_D24
+  - name: D31
+    on_enter: on_enter_D31
+  - name: D32
+    on_enter: on_enter_D32
+  - name: D33
+    on_enter: on_enter_D33
+  - name: D34
+    on_enter: on_enter_D34
+  - name: D41
+    on_enter: on_enter_D41
+  - name: D42
+    on_enter: on_enter_D42
+  - name: D43
+    on_enter: on_enter_D43
+  - name: D44
+    on_enter: on_enter_D44
+  - name: D1F
+    on_enter: on_enter_D1F
+  - name: D2F
+    on_enter: on_enter_D2F
+  - name: D3F
+    on_enter: on_enter_D3F
+  - name: D4F
+    on_enter: on_enter_D4F
+transitions: []

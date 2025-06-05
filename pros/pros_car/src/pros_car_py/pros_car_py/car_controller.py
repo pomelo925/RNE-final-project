@@ -138,27 +138,41 @@ class CarController:
                 )
                 if self.nav_processing.get_finish_flag():
                     self.nav_processing.reset_nav_process()
-            elif mode == "target_auto_nav":
 
-                current_target = self.target_list[self.target_idx]
-                action_key = (
-                    self.nav_processing.get_action_from_nav2_plan_no_dynamic_p_2_p(
-                        goal_coordinates=current_target
-                    )
-                )
-                if self.nav_processing.get_finish_flag():
-                    self.nav_processing.reset_nav_process()
-                    self.target_idx = (self.target_idx + 1) % len(self.target_list)
-                    continue
-            # 發布控制指令
+            # elif mode == "target_auto_nav":
 
-            elif mode == "custom_nav":
-                action_key = self.nav_processing.RGBcam_nav_unity()
+            #     current_target = self.target_list[self.target_idx]
+            #     action_key = (
+            #         self.nav_processing.get_action_from_nav2_plan_no_dynamic_p_2_p(
+            #             goal_coordinates=current_target
+            #         )
+            #     )
+            #     if self.nav_processing.get_finish_flag():
+            #         self.nav_processing.reset_nav_process()
+            #         self.target_idx = (self.target_idx + 1) % len(self.target_list)
+            #         continue
+            
+
+            elif mode == "living_room_fixed":
+                # map: living room
+                action_key = self.nav_processing.RGBcam_nav_unity_living_room_fixed()
+
+            elif mode == "living_room_random":
+                # map: living room
+                action_key = self.nav_processing.RGBcam_nav_unity_living_room_random()
+    
+            elif mode == "living_door_random":
+                # map: door random
+                action_key = self.nav_processing.RGBcam_nav_unity_door_random()
+            
+            elif mode == "pikachu":
+                # map: pikachu
+                action_key = self.nav_processing.RGBcam_nav_unity_pikachu()
 
             if self._thread_running == False:
                 action_key = "STOP"
-            print(action_key)
-            time.sleep(0.05)
+            
+            time.sleep(0.01)
             self.ros_communicator.publish_car_control(
                 action_key, publish_rear=True, publish_front=True
             )

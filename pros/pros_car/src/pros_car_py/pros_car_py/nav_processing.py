@@ -1,3 +1,7 @@
+import subprocess
+import os
+from interfaces.msg import DetectedObjectList
+
 from pros_car_py.nav2_utils import (
     get_yaw_from_quaternion,
     get_direction_vector,
@@ -5,7 +9,6 @@ from pros_car_py.nav2_utils import (
     calculate_angle_point,
     cal_distance,
 )
-import math
 
 
 class Nav2Processing:
@@ -18,6 +21,7 @@ class Nav2Processing:
         self.index_length = 0
         self.recordFlag = 0
         self.goal_published_flag = False
+        self.masked_publisher_started = False
 
     def reset_nav_process(self):
         self.finishFlag = False
@@ -270,15 +274,244 @@ class Nav2Processing:
             action = "COUNTERCLOCKWISE_ROTATION"
         return action
 
-    def RGBcam_nav_unity(self):
-        yolo_detection_info = self.ros_communicator.get_latest_yolo_detection_position()
-        # print("yolo_detection_info:", yolo_detection_info)
+    def print_status(self, mode: str, info: str):
+        os.system("cls" if os.name == "nt" else "clear")  # 清版
+        print("[MODE]\t\t|\t[INFO]")
+        print(f"{mode.upper()}\t\t|\t{info}")
 
-        action = "CLOCKWISE_ROTATION"
-        if yolo_detection_info:
-            action = "STOP"
+    def RGBcam_nav_unity_living_room_fixed(self):
+        # 圖像設定
+        image_width = 640
+        image_height = 480
+        image_area = image_width * image_height
+        image_center_x = image_width // 2
+
+        # 控制參數
+        bbox_center_range_ratio = 0.06  # 目標邊界框中心範圍比例
+        pikachu_area_threshold = 0.2    # 目標面積比例閾值
+        obstacle_x_offset = 30          # 障礙物偏移量
+
+        # 動作參數
+        SEARCH_ROTATION_ACTION = "COUNTERCLOCKWISE_ROTATION"
+        ALIGN_ROTATE_LEFT_ACTION = "COUNTERCLOCKWISE_ROTATION_SLOW"
+        ALIGN_ROTATE_RIGHT_ACTION = "CLOCKWISE_ROTATION_SLOW"
+
+        # 取得最新的 YOLO 偵測結果
+        detected_list = self.ros_communicator.get_latest_yolo_detection_list()
+
+        # 檢查偵測結果是否有效
+        if not detected_list or not hasattr(detected_list, "objects"):
+            self.print_status(SEARCH_ROTATION_ACTION, "no detections")
+            return SEARCH_ROTATION_ACTION
+
+        # 檢查是否有偵測到 "pikachu" 物件
+        pikachu_objects = [obj for obj in detected_list.objects if obj.label == "pikachu"]
+        if not pikachu_objects:
+            self.print_status(SEARCH_ROTATION_ACTION, "pikachu not found")
+            return SEARCH_ROTATION_ACTION
+
+        # 找到最大的 "pikachu" 物件
+        target = max(pikachu_objects, key=lambda obj: (obj.x2 - obj.x1) * (obj.y2 - obj.y1))
+        bbox_x1 = target.x1
+        bbox_x2 = target.x2
+        center_range_px = int(image_width * bbox_center_range_ratio)
+
+        # 檢查目標邊界框是否在畫面中心範圍內
+        if not (bbox_x1 <= image_center_x + center_range_px and bbox_x2 >= image_center_x - center_range_px):
+            # 根據目標中心位置微調方向
+            if target.cx < image_center_x:
+                self.print_status(ALIGN_ROTATE_LEFT_ACTION, "align left")
+                return ALIGN_ROTATE_LEFT_ACTION
+            else:
+                self.print_status(ALIGN_ROTATE_RIGHT_ACTION, "align right")
+                return ALIGN_ROTATE_RIGHT_ACTION
+
+        # 計算目標面積比例
+        bbox_area = (target.x2 - target.x1) * (target.y2 - target.y1)
+        bbox_area_ratio = bbox_area / image_area
+        self.print_status("FORWARD", f"bbox_area_ratio: {bbox_area_ratio:.2f}")
+
+        # 若面積比例小於閾值，檢查障礙物
+        if bbox_area_ratio < pikachu_area_threshold:
+            obstacle_objects = [
+                obj for obj in detected_list.objects
+                if obj.label != "pikachu" and (
+                    abs(obj.x1 - image_center_x) < obstacle_x_offset or
+                    abs(obj.x2 - image_center_x) < obstacle_x_offset
+                )
+            ]
+
+            # 若有障礙物，尋找最近的障礙物邊緣
+            if obstacle_objects:
+                def closest_edge_to_center(obj):
+                    return min(abs(obj.x1 - image_center_x), abs(obj.x2 - image_center_x))
+
+                nearest_obstacle = min(obstacle_objects, key=closest_edge_to_center) 
+
+                # 根據最近障礙物的邊緣位置決定旋轉方向
+                if abs(nearest_obstacle.x1 - image_center_x) < abs(nearest_obstacle.x2 - image_center_x):
+                    self.print_status(ALIGN_ROTATE_RIGHT_ACTION, "avoid obstacle: left edge")
+                    return ALIGN_ROTATE_RIGHT_ACTION
+                else:
+                    self.print_status(ALIGN_ROTATE_LEFT_ACTION, "avoid obstacle: right edge")
+                    return ALIGN_ROTATE_LEFT_ACTION
+
+            return "FORWARD"
+
         else:
-            action = "CLOCKWISE_ROTATION"
+            self.print_status("STOP", f"bbox_area_ratio: {bbox_area_ratio:.2f} (threshold reached)")
+            return "STOP"
+
+    def RGBcam_nav_unity_living_room_random(self):
+        # 圖像設定
+        image_width = 640
+        image_height = 480
+        image_area = image_width * image_height
+        image_center_x = image_width // 2
+
+        # 控制參數
+        bbox_center_range_ratio = 0.06  # 目標邊界框中心範圍比例
+        pikachu_area_threshold = 0.06    # 目標面積比例閾值
+        obstacle_x_offset = 30          # 障礙物偏移量
+
+        # 動作參數
+        SEARCH_ROTATION_ACTION = "COUNTERCLOCKWISE_ROTATION"
+        ALIGN_ROTATE_LEFT_ACTION = "COUNTERCLOCKWISE_ROTATION_SLOW"
+        ALIGN_ROTATE_RIGHT_ACTION = "CLOCKWISE_ROTATION_SLOW"
+
+        # 取得最新的 YOLO 偵測結果
+        detected_list = self.ros_communicator.get_latest_yolo_detection_list()
+
+        # 檢查偵測結果是否有效
+        if not detected_list or not hasattr(detected_list, "objects"):
+            self.print_status(SEARCH_ROTATION_ACTION, "no detections")
+            return SEARCH_ROTATION_ACTION
+
+        # 檢查是否有偵測到 "pikachu" 物件
+        pikachu_objects = [obj for obj in detected_list.objects if obj.label == "pikachu"]
+        if not pikachu_objects:
+            self.print_status(SEARCH_ROTATION_ACTION, "pikachu not found")
+            return SEARCH_ROTATION_ACTION
+
+        # 找到最大的 "pikachu" 物件
+        target = max(pikachu_objects, key=lambda obj: (obj.x2 - obj.x1) * (obj.y2 - obj.y1))
+        bbox_x1 = target.x1
+        bbox_x2 = target.x2
+        center_range_px = int(image_width * bbox_center_range_ratio)
+
+        # 檢查目標邊界框是否在畫面中心範圍內
+        if not (bbox_x1 <= image_center_x + center_range_px and bbox_x2 >= image_center_x - center_range_px):
+            # 根據目標中心位置微調方向
+            if target.cx < image_center_x:
+                self.print_status(ALIGN_ROTATE_LEFT_ACTION, "align left")
+                return ALIGN_ROTATE_LEFT_ACTION
+            else:
+                self.print_status(ALIGN_ROTATE_RIGHT_ACTION, "align right")
+                return ALIGN_ROTATE_RIGHT_ACTION
+
+        # 計算目標面積比例
+        bbox_area = (target.x2 - target.x1) * (target.y2 - target.y1)
+        bbox_area_ratio = bbox_area / image_area
+        self.print_status("FORWARD", f"bbox_area_ratio: {bbox_area_ratio:.2f}")
+
+        # 若面積比例小於閾值，檢查障礙物
+        if bbox_area_ratio < pikachu_area_threshold:
+            obstacle_objects = [
+                obj for obj in detected_list.objects
+                if obj.label != "pikachu" and (
+                    abs(obj.x1 - image_center_x) < obstacle_x_offset or
+                    abs(obj.x2 - image_center_x) < obstacle_x_offset
+                )
+            ]
+
+            # 若有障礙物，尋找最近的障礙物邊緣
+            if obstacle_objects:
+                def closest_edge_to_center(obj):
+                    return min(abs(obj.x1 - image_center_x), abs(obj.x2 - image_center_x))
+
+                nearest_obstacle = min(obstacle_objects, key=closest_edge_to_center) 
+
+                # 根據最近障礙物的邊緣位置決定旋轉方向
+                if abs(nearest_obstacle.x1 - image_center_x) < abs(nearest_obstacle.x2 - image_center_x):
+                    self.print_status(ALIGN_ROTATE_RIGHT_ACTION, "avoid obstacle: left edge")
+                    return ALIGN_ROTATE_RIGHT_ACTION
+                else:
+                    self.print_status(ALIGN_ROTATE_LEFT_ACTION, "avoid obstacle: right edge")
+                    return ALIGN_ROTATE_LEFT_ACTION
+
+            return "FORWARD"
+
+        else:
+            self.print_status("STOP", f"bbox_area_ratio: {bbox_area_ratio:.2f} (threshold reached)")
+            return "STOP"
+
+    def RGBcam_nav_unity_door_random(self):
+        # 1. 先判斷是否有辨識到 pikachu
+        detected_list = self.ros_communicator.get_latest_yolo_detection_list()
+        image_width = 640
+        image_height = 480
+        image_area = image_width * image_height
+        image_center_x = image_width // 2
+
+        bbox_center_range_ratio = 0.06
+        pikachu_area_threshold = 0.06
+        obstacle_x_offset = 30
+
+        SEARCH_ROTATION_ACTION = "COUNTERCLOCKWISE_ROTATION"
+        ALIGN_ROTATE_LEFT_ACTION = "COUNTERCLOCKWISE_ROTATION_SLOW"
+        ALIGN_ROTATE_RIGHT_ACTION = "CLOCKWISE_ROTATION_SLOW"
+
+        # 若有 pikachu，直接用 living_room_random 邏輯
+        if detected_list and hasattr(detected_list, "objects"):
+            pikachu_objects = [obj for obj in detected_list.objects if obj.label == "pikachu"]
+            if pikachu_objects:
+                target = max(pikachu_objects, key=lambda obj: (obj.x2 - obj.x1) * (obj.y2 - obj.y1))
+                bbox_x1 = target.x1
+                bbox_x2 = target.x2
+                center_range_px = int(image_width * bbox_center_range_ratio)
+                if not (bbox_x1 <= image_center_x + center_range_px and bbox_x2 >= image_center_x - center_range_px):
+                    if target.cx < image_center_x:
+                        self.print_status(ALIGN_ROTATE_LEFT_ACTION, "align left")
+                        return ALIGN_ROTATE_LEFT_ACTION
+                    else:
+                        self.print_status(ALIGN_ROTATE_RIGHT_ACTION, "align right")
+                        return ALIGN_ROTATE_RIGHT_ACTION
+                bbox_area = (target.x2 - target.x1) * (target.y2 - target.y1)
+                bbox_area_ratio = bbox_area / image_area
+                self.print_status("FORWARD", f"bbox_area_ratio: {bbox_area_ratio:.2f}")
+                if bbox_area_ratio < pikachu_area_threshold:
+                    obstacle_objects = [
+                        obj for obj in detected_list.objects
+                        if obj.label != "pikachu" and (
+                            abs(obj.x1 - image_center_x) < obstacle_x_offset or
+                            abs(obj.x2 - image_center_x) < obstacle_x_offset
+                        )
+                    ]
+                    if obstacle_objects:
+                        def closest_edge_to_center(obj):
+                            return min(abs(obj.x1 - image_center_x), abs(obj.x2 - image_center_x))
+                        nearest_obstacle = min(obstacle_objects, key=closest_edge_to_center)
+                        if abs(nearest_obstacle.x1 - image_center_x) < abs(nearest_obstacle.x2 - image_center_x):
+                            self.print_status(ALIGN_ROTATE_RIGHT_ACTION, "avoid obstacle: left edge")
+                            return ALIGN_ROTATE_RIGHT_ACTION
+                        else:
+                            self.print_status(ALIGN_ROTATE_LEFT_ACTION, "avoid obstacle: right edge")
+                            return ALIGN_ROTATE_LEFT_ACTION
+                    return "FORWARD"
+                else:
+                    self.print_status("STOP", f"bbox_area_ratio: {bbox_area_ratio:.2f} (threshold reached)")
+                    return "STOP"
+
+        # 2. State machine
+        polygon_list = self.ros_communicator.get_latest_polygon_list()
+        print("Polygon List:", polygon_list)
+
+        action="STOP"
+        
+        return action
+
+    def RGBcam_nav_unity_pikachu(self):
+        action = "STOP"
         return action
 
     def stop_nav(self):
