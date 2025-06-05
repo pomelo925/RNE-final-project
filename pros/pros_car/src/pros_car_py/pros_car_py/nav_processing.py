@@ -1,5 +1,6 @@
 import subprocess
 import os
+import yaml
 from interfaces.msg import DetectedObjectList
 
 from pros_car_py.nav2_utils import (
@@ -9,6 +10,7 @@ from pros_car_py.nav2_utils import (
     calculate_angle_point,
     cal_distance,
 )
+import time
 
 
 class Nav2Processing:
@@ -22,6 +24,15 @@ class Nav2Processing:
         self.recordFlag = 0
         self.goal_published_flag = False
         self.masked_publisher_started = False
+        self._state_machine = self._load_state_machine()
+        self._current_state = "START"
+
+    def _load_state_machine(self):
+        config_path = os.path.join(
+            os.path.dirname(__file__), "config", "states.yaml"
+        )
+        with open(config_path, "r", encoding="utf-8") as f:
+            return yaml.safe_load(f)
 
     def reset_nav_process(self):
         self.finishFlag = False
@@ -503,16 +514,187 @@ class Nav2Processing:
                     return "STOP"
 
         # 2. State machine
-        polygon_list = self.ros_communicator.get_latest_polygon_list()
-        print("Polygon List:", polygon_list)
+        state_name = self.get_current_state() # 取得目前 state 名稱
+        state_func = getattr(self, f"on_enter_{state_name}", None) # 動態取得對應的 state function
 
-        action="STOP"
+        polygon_list = self.ros_communicator.get_latest_polygon_list()
         
+        if state_func is not None:
+            # 呼叫 state function，傳入 polygon_list，並取得 action
+            action = state_func(polygon_list)
+        else:
+            action = "STOP"
         return action
 
     def RGBcam_nav_unity_pikachu(self):
         action = "STOP"
         return action
 
-    def stop_nav(self):
+
+    def get_current_state(self):
+        return self._current_state
+
+    def set_current_state(self, state_name):
+        self._current_state = state_name
+
+    def reset_state_machine(self):
+        if self._state_machine['states']:
+            self._current_state = self._state_machine['states'][0]['name']
+
+    ### --- 車輛控制 --- #####
+    def move(self, action_or_shortcut: str, duration: float):
+        """
+        控制車輛執行指定動作或簡寫指令，持續 duration 秒。
+        支援簡寫: F, R, L, B, S
+        """
+        MOVE_SHORTCUT_MAP = {
+            "F": "FORWARD",
+            "R": "CLOCKWISE_ROTATION_MEDIAN",
+            "L": "COUNTERCLOCKWISE_ROTATION_MEDIAN",
+            "B": "BACKWARD",
+            "S": "STOP"
+        }
+        
+        action = MOVE_SHORTCUT_MAP.get(action_or_shortcut.upper(), action_or_shortcut)
+        
+        self.ros_communicator.publish_car_control(action)
+        time.sleep(duration)
+        self.ros_communicator.publish_car_control("STOP")
+
+    ##### --- state machine --- #####
+
+    ### --- 檢測狀態 --- ###
+    # 這個階段的狀態主要用於尋找與檢測目標點。
+    # 這裡狀態將依序進行：START -> MID1 -> MID2 -> FINAL。
+    
+    def on_enter_START(self, polygon_list):
+        """
+        只判斷一次，有無 polygon list：
+        - 沒有，則 BACKWARD 1s，並 STOP
+        - 有，若頂點皆在畫面右側，則順時針轉 1s 並 STOP；左側則逆時針轉 1s 並 stop。(只看 x 座標)
+        """
+        
+        # 沒有 polygon list
+        if not polygon_list or not hasattr(polygon_list, "points") or not polygon_list.points:
+            self.move("R", 0.2)
+            new_polygon_list = self.ros_communicator.get_latest_polygon_list()
+
+            # 檢測目標：D4
+            if new_polygon_list.len>=5:
+                self.move("R", 0.3)
+                self.move("F", 2.2)
+                self.move("S", 0.2)
+                self.move("L", 0.5)
+                self.move("F", 0.6)
+                self.set_current_state("MID1")
+                return "STOP"
+
+            # 檢測目標：D1
+            else:
+                self.move("L", 0.7)
+                self.move("F", 2.2)
+                self.move("S", 0.2)
+                self.move("R", 0.5)
+                self.move("F", 0.6)
+                self.set_current_state("MID1")
+                return "STOP"
+        
+        # 起初就有 polygon list
+        else:
+            ## 判斷所有頂點的 x 座標是否都在畫面右側或左側
+            x_list = [p.x for p in polygon_list.points]
+            
+            # 檢測目標：D3
+            if all(x > 640//2 for x in x_list):
+                self.move("R", 0.5)
+                self.move("F", 0.6)
+                self.move("S", 0.5)
+                self.move("L", 0.5)
+                self.move("F", 0.6)
+                self.set_current_state("MID1")
+                return "STOP"
+            
+            # 檢測目標：D2
+            else:
+                self.move("L", 0.5)
+                self.move("F", 0.6)
+                self.move("S", 0.5)
+                self.move("R", 0.5)
+                self.move("F", 0.6)
+                self.set_current_state("MID1")
+                return "STOP"
+
+    def on_enter_MID1(self, polygon_list):
+        # 只做決策
         return "STOP"
+
+    def on_enter_MID2(self, polygon_list):
+        pass
+
+    def on_enter_FINAL(self, polygon_list):
+        pass
+
+    
+    ### --- 移動狀態 --- ###
+    # 這個階段的狀態僅做移動，並行走固定的路線。
+    # 所有行走路線為固定腳本，移動時間到就停止移動，並回到停留與檢測狀態。
+
+    def on_enter_D11(self):
+        pass
+
+    def on_enter_D12(self):
+        pass
+
+    def on_enter_D13(self):
+        pass
+
+    def on_enter_D14(self):
+        pass
+
+    def on_enter_D21(self):
+        pass
+
+    def on_enter_D22(self):
+        pass
+
+    def on_enter_D23(self):
+        pass
+
+    def on_enter_D24(self):
+        pass
+
+    def on_enter_D31(self):
+        pass
+
+    def on_enter_D32(self):
+        pass
+
+    def on_enter_D33(self):
+        pass
+
+    def on_enter_D34(self):
+        pass
+
+    def on_enter_D41(self):
+        pass
+
+    def on_enter_D42(self):
+        pass
+
+    def on_enter_D43(self):
+        pass
+
+    def on_enter_D44(self):
+        pass
+
+    def on_enter_D1F(self):
+        pass
+
+    def on_enter_D2F(self):
+        pass
+
+    def on_enter_D3F(self):
+        pass
+
+    def on_enter_D4F(self):
+        pass

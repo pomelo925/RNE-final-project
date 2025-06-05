@@ -258,10 +258,11 @@ class RosCommunicator(Node):
                 point_msg.x = int(pt[0][0])
                 point_msg.y = int(pt[0][1])
                 point_list_msg.points.append(point_msg)
-            # 設定 len
-            for p in point_list_msg.points:
-                p.len = len(point_list_msg.points)
-        
+            # 設定 len 為頂點數量
+            point_list_msg.len = len(point_list_msg.points)
+        else:
+            point_list_msg.len = 0
+
         self.publish_data("edges", point_list_msg)
 
         # 發布 masked image

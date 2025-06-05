@@ -161,7 +161,7 @@ class CarController:
                 # map: living room
                 action_key = self.nav_processing.RGBcam_nav_unity_living_room_random()
     
-            elif mode == "living_door_random":
+            elif mode == "door_random":
                 # map: door random
                 action_key = self.nav_processing.RGBcam_nav_unity_door_random()
             

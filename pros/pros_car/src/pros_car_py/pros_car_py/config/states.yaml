@@ -1,16 +1,49 @@
 states:
 
-# 停留與檢測狀態
+### --- 檢測狀態 --- ###
+# 這個階段的狀態主要用於尋找與檢測目標點。
+# 這裡狀態將依序進行：START -> MID1 -> MID2 -> FINAL。
   - name: START
     on_enter: on_enter_START
+
   - name: MID1
     on_enter: on_enter_MID1
+
   - name: MID2
     on_enter: on_enter_MID2
+    
   - name: FINAL
     on_enter: on_enter_FINAL
 
-# 移動狀態
+### --- 移動狀態 --- ###
+# 這個階段的狀態僅做移動，並行走固定的路線。
+# 以 move 定義行走路線，時間到即停止，並切回檢測狀態。
+
+# Start -> MID1
+  - name: S11
+    on_enter: on_enter_S1
+    move:
+      - [L, 1]
+
+  - name: S12
+    on_enter: on_enter_S2
+    move:
+      - [L, 1]
+
+
+  - name: S13
+    on_enter: on_enter_S3
+    move:
+      - [L, 1]
+
+
+  - name: S14
+    on_enter: on_enter_S4
+    move:
+      - [L, 1]
+
+
+# Door -> Door
   - name: D11
     on_enter: on_enter_D11
   - name: D12
@@ -19,6 +52,7 @@ states:
     on_enter: on_enter_D13
   - name: D14
     on_enter: on_enter_D14
+
   - name: D21
     on_enter: on_enter_D21
   - name: D22
@@ -27,6 +61,7 @@ states:
     on_enter: on_enter_D23
   - name: D24
     on_enter: on_enter_D24
+
   - name: D31
     on_enter: on_enter_D31
   - name: D32
@@ -35,6 +70,7 @@ states:
     on_enter: on_enter_D33
   - name: D34
     on_enter: on_enter_D34
+
   - name: D41
     on_enter: on_enter_D41
   - name: D42
@@ -43,6 +79,8 @@ states:
     on_enter: on_enter_D43
   - name: D44
     on_enter: on_enter_D44
+
+# MID2 -> Pikachu
   - name: D1F
     on_enter: on_enter_D1F
   - name: D2F
@@ -51,4 +89,5 @@ states:
     on_enter: on_enter_D3F
   - name: D4F
     on_enter: on_enter_D4F
+
 transitions: []
