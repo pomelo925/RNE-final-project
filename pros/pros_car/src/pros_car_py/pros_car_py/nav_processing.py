@@ -570,7 +570,7 @@ class Nav2Processing:
 
     def RGBcam_nav_unity_door_random(self):
         # 1. 若有 pikachu，直接 track_pikachu
-        action, info = self.track_pikachu(pikachu_area_threshold=0.06)
+        action, info = self.track_pikachu(pikachu_area_threshold=0.3)
         if info["found_pikachu"]:
             self.print_status(action, f"bbox_area_ratio: {info['bbox_area_ratio']}")
             return action
@@ -782,6 +782,42 @@ class Nav2Processing:
         self.ros_communicator.publish_car_control("STOP")
         return True
     
+    def R2H(self):
+        """
+        右轉，直至 polygon 存在頂點佔據畫面左半部。
+        """
+        X_TOLERANCE = 0
+        polygon = self.ros_communicator.get_latest_polygon_list()
+        if not polygon or not polygon.points:
+            self.ros_communicator.publish_car_control("CLOCKWISE_ROTATION_SLOW")
+            return False
+
+        for point in polygon.points:
+            if point.x <= 319 + X_TOLERANCE:
+                self.ros_communicator.publish_car_control("STOP")
+                return True
+
+        self.ros_communicator.publish_car_control("CLOCKWISE_ROTATION_SLOW")
+        return False
+    
+    def L2H(self):
+        """
+        左轉，直至 polygon 存在頂點佔據畫面右半部。
+        """
+        X_TOLERANCE = 0
+        polygon = self.ros_communicator.get_latest_polygon_list()
+        if not polygon or not polygon.points:
+            self.ros_communicator.publish_car_control("COUNTERCLOCKWISE_ROTATION_SLOW")
+            return False
+
+        for point in polygon.points:
+            if point.x >= 320 - X_TOLERANCE:
+                self.ros_communicator.publish_car_control("STOP")
+                return True
+
+        self.ros_communicator.publish_car_control("COUNTERCLOCKWISE_ROTATION_SLOW")
+        return False
+    
     def F2M(self):
         """
         往前走，直至有多個 polygon 存在。
@@ -984,6 +1020,38 @@ class Nav2Processing:
         self.ros_communicator.publish_car_control("STOP")
         return True
     
+    def R2Cc(self):
+        """
+        往右轉，直至存在 Concave Polygon（類型 14 或 23）。
+        """
+        if not self.polygon_exist():
+            self.ros_communicator.publish_car_control("CLOCKWISE_ROTATION_SLOW")
+            return False
+        
+        polygon_type = self.get_polygon_type()
+        if polygon_type not in ["CONCAVE_14", "CONCAVE_23"]:
+            self.ros_communicator.publish_car_control("CLOCKWISE_ROTATION_SLOW")
+            return False
+        
+        self.ros_communicator.publish_car_control("STOP")
+        return True
+    
+    def L2Cc(self):
+        """
+        往左轉，直至存在 Concave Polygon（類型 14 或 23）。
+        """
+        if not self.polygon_exist():
+            self.ros_communicator.publish_car_control("COUNTERCLOCKWISE_ROTATION_SLOW")
+            return False
+        
+        polygon_type = self.get_polygon_type()
+        if polygon_type not in ["CONCAVE_14", "CONCAVE_23"]:
+            self.ros_communicator.publish_car_control("COUNTERCLOCKWISE_ROTATION_SLOW")
+            return False
+        
+        self.ros_communicator.publish_car_control("STOP")
+        return True
+
     def F2Cc(self):
         """
         往前走，直至存在 Concave Polygon（類型 14 或 23）。
@@ -995,6 +1063,36 @@ class Nav2Processing:
         polygon_type = self.get_polygon_type()
         if polygon_type not in ["CONCAVE_14", "CONCAVE_23"]:
             self.ros_communicator.publish_car_control("FORWARD")
+            return False
+        
+        self.ros_communicator.publish_car_control("STOP")
+        return True
+    
+    def R2Cv(self):
+        """
+        往右轉，直至存在 Convex Polygon。
+        """
+        if not self.polygon_exist():
+            self.ros_communicator.publish_car_control("CLOCKWISE_ROTATION_SLOW")
+            return False
+        
+        if self.get_polygon_type() != "CONVEX":
+            self.ros_communicator.publish_car_control("CLOCKWISE_ROTATION_SLOW")
+            return False
+        
+        self.ros_communicator.publish_car_control("STOP")
+        return True
+    
+    def L2Cv(self):
+        """
+        往左轉，直至存在 Convex Polygon。
+        """
+        if not self.polygon_exist():
+            self.ros_communicator.publish_car_control("COUNTERCLOCKWISE_ROTATION_SLOW")
+            return False
+        
+        if self.get_polygon_type() != "CONVEX":
+            self.ros_communicator.publish_car_control("COUNTERCLOCKWISE_ROTATION_SLOW")
             return False
         
         self.ros_communicator.publish_car_control("STOP")
@@ -1039,11 +1137,11 @@ class Nav2Processing:
             polygon = self.ros_communicator.get_latest_polygon_list()
 
             if all(point.x < 320 for point in polygon.points):
-                print("S2")
+                print("\nS2")
                 self.set_main_state("S2") # D2: 都在左側
                 return "STOP"
             else:
-                print("S3")
+                print("\nS3")
                 self.set_main_state("S3") # D3: 都在右側
                 return "STOP"
         
@@ -1052,16 +1150,17 @@ class Nav2Processing:
                 pass
 
             if self.get_polygon_type() == "CONVEX": # D1：凹多邊形(另側)
-                print("S1")
+                print("\nS1")
                 self.set_main_state("S1")
                 return "STOP"
             else:
-                print("S4")
+                print("\nS4")
                 self.set_main_state("S4") # D4: 凹多邊形
                 return "STOP"
 
 
     def on_enter_MID11(self):
+        print("<- MID11 ->")
         while (not self.R2F()):
             pass
 
@@ -1085,51 +1184,45 @@ class Nav2Processing:
                 return "STOP"
 
     def on_enter_MID12(self):
+        print("<- MID12 ->")
         while (not self.L2F()):
             pass
         
-        if self.get_polygon_type() == "CONCAVE_14":
+        # Door 1
+        if self.get_polygon_type() != "CONVEX":
             print("D12_1")
             self.set_main_state("D12_1")
             return "STOP"
         
+        while(not self.R2N()):
+            pass
+        while(not self.R2F()):
+            pass
+        self.move("S", 0.3)
+
+        if self.get_polygon_type() == "CONCAVE_23":
+            print("D12_3")
+            self.set_main_state("D12_3")
+            return "STOP"
         else:
-            while(not self.R2N()):
-                pass
-            
-            while(not self.R2F()):
-                pass
-            
-            if self.get_polygon_type() == "CONCAVE_23":
-                print("D12_3")
-                self.set_main_state("D12_3")
-                return "STOP"
-            else:
-                print("D12_4")
-                self.set_main_state("D12_4")
-                return "STOP"
+            print("D12_4")
+            self.set_main_state("D12_4")
+            return "STOP"
 
     def on_enter_MID13(self):
-        while (not self.R2F()):
-            pass
-
-        if self.get_polygon_type() == "CONCAVE_14":
+        print("<- MID13 ->")
+        if self.get_polygon_type() != "CONVEX":
             print("D13_4")
             self.set_main_state("D13_4")
             return "D13_4"
         
+        while(not self.L2A()):
+            pass
+        while(not self.F2N()):
+            pass
         while(not self.L2F()):
             pass
         
-        while(not self.L2A()):
-            pass
-
-        while(not self.F2N()):
-            pass
-
-        while(not self.L2F()):
-            pass
-
         if self.get_polygon_type() == "CONCAVE_23":
             print("D13_2")
             self.set_main_state("D13_2")
@@ -1141,20 +1234,20 @@ class Nav2Processing:
         
 
     def on_enter_MID14(self):
+        print("<- MID14 ->")
         while (not self.L2F()):
             pass
-        
-        self.move("F", 1) 
-        self.move("S", 0.3) 
-
+        # Door 3
         if self.get_polygon_type() == "CONCAVE_23":
             print("D14_3")
             self.set_main_state("D14_3")
+            return "STOP"
+        
         else:
             while(not self.L2A()):
                 pass
             
-            self.move("F", 3.5)
+            self.move("F", 2)
             self.move("S", 0.3)
 
             while(not self.L2F()):
@@ -1169,39 +1262,234 @@ class Nav2Processing:
                 self.set_main_state("D14_1")
                 return "STOP"
 
-        return "STOP"
 
     def on_enter_MID21(self):
+        print("<- MID21 ->")
+        while (not self.R2F()):
+            pass
+        
+        # Door 2
+        if self.get_polygon_type() == "CONCAVE_23":
+            self.move("F", 1.5)
+
+            while (not self.L2Cv()):
+                pass
+
+            self.set_main_state("DONE")
+            return "STOP"
+
+        # Doot 3 
         while (not self.R2F()):
             pass
 
-        while (not self.R2A()):
-            pass
-        
-        print("D21_F")
-        self.set_main_state("D21_F")
+        self.move("F", 1.5)
+
+        if self.get_polygon_type() == "CONCAVE_23":
+            while (not self.F2Cc()):
+                pass
+            while (not self.L2Cv()):
+                pass
+            while (not self.F2N()):
+                pass
+            while (not self.L2F()):
+                pass
+            self.set_main_state("DONE")
+            return "STOP"
+
+        # Door 4
+        else:
+            while (not self.F2N()):
+                pass
+            while (not self.L2H()):
+                pass
+            while (not self.F2N()):
+                pass
+            while (not self.L2F()):
+                pass
+            while (not self.F2N()): # 垂直出去
+                pass
+            while (not self.L2Cv()):
+                pass
+        self.set_main_state("DONE")
         return "STOP"
     
     def on_enter_MID24(self):
+        print("<- MID24 ->")
         while (not self.L2F()):
             pass
-
-        while (not self.L2A()):
-            pass
         
-        print("D24_F")
-        self.set_main_state("D24_F")
+        # Door 3
+        if self.get_polygon_type() == "CONCAVE_23":
+            print("D24_3")
+            self.move("F", 1.5)
+            while (not self.R2Cv()):
+                pass
+            self.set_main_state("DONE")
+            return "STOP"
+        
+        # Door 2 
+        while (not self.L2F()):
+            pass
+        self.move("F", 1.5)
+        if self.get_polygon_type() == "CONCAVE_23":
+            print("D24_2")
+            while (not self.F2Cc()):
+                pass
+            while (not self.R2Cv()):
+                pass
+            while (not self.F2N()):
+                pass
+            while (not self.R2F()):
+                pass
+            self.set_main_state("DONE")
+            return "STOP"
+        
+        # Door 1
+        else:
+            print("D24_1")
+            while (not self.F2N()):
+                pass
+            while (not self.R2H()):
+                pass
+            while (not self.F2N()):
+                pass
+            while (not self.R2F()):
+                pass
+            while (not self.F2N()): # 垂直出去
+                pass
+            while (not self.R2Cv()):
+                pass
+
+        self.set_main_state("DONE")
         return "STOP"
 
     def on_enter_MID22(self):
+        print("<- MID22 ->")
+        # Door 1
+        while (not self.L2F()):
+            pass
+
+        if self.get_polygon_type() != "CONVEX":
+            print("D22_1")
+            while (not self.F2N()):
+                pass
+            while (not self.R2H()):
+                pass
+            while (not self.F2N()):
+                pass
+            while (not self.R2F()):
+                pass
+            while (not self.F2N()):
+                pass # 垂直出去
+            while (not self.R2Cv()):
+                pass
+            self.set_main_state("DONE")
+            return "STOP"
+
+        
+        # Door 3
+        while (not self.R2Cc()):
+            pass
+        while (not self.R2F()):
+            pass
+
+        if self.get_polygon_type() == "CONCAVE_23":
+            print("D22_3")
+            while (not self.F2Cv()):
+                pass
+            while (not self.L2Cc()):
+                pass
+            while (not self.L2Cv()):
+                pass
+            while (not self.F2N()):
+                pass
+            while (not self.L2Cv()):
+                pass
+            self.set_main_state("DONE")
+            return "STOP"
+        
+        # Door 4
+        print("D22_4")
+        while( not self.F2N()):
+            pass
+        while (not self.L2H()):
+            pass
+        while (not self.F2N()):
+            pass
+        while (not self.L2F()):
+            pass
+        while (not self.F2N()):
+            pass
+        while (not self.L2Cv()):
+            pass
+        self.set_main_state("DONE")
         return "STOP"
     
     def on_enter_MID23(self):
+        print("<- MID23 ->")
+       # Door 4
+        while (not self.R2F()):
+            pass
+
+        if self.get_polygon_type() != "CONVEX":
+            print("D23_4")
+            while (not self.F2N()):
+                pass
+            while (not self.L2H()):
+                pass
+            while (not self.F2N()):
+                pass
+            while (not self.L2F()):
+                pass
+            while (not self.F2N()):
+                pass # 垂直出去
+            while (not self.L2Cv()):
+                pass
+            self.set_main_state("DONE")
+            return "STOP"
+
+        
+        # Door 2
+        while (not self.L2Cc()):
+            pass
+        while (not self.L2F()):
+            pass
+
+        if self.get_polygon_type() == "CONCAVE_23":
+            print("D23_3")
+            while (not self.F2Cv()):
+                pass
+            while (not self.R2Cc()):
+                pass
+            while (not self.R2Cv()):
+                pass
+            while (not self.F2N()):
+                pass
+            while (not self.R2Cv()):
+                pass
+            self.set_main_state("DONE")
+            return "STOP"
+        
+        # Door 1
+        print("D23_1")
+        while( not self.F2N()):
+            pass
+        while (not self.R2H()):
+            pass
+        while (not self.F2N()):
+            pass
+        while (not self.R2F()):
+            pass
+        while (not self.F2N()):
+            pass
+        while (not self.R2Cv()):
+            pass
+        self.set_main_state("DONE")
         return "STOP"
     
 
 
-    def on_enter_FINAL(self):
+    def on_enter_DONE(self):
         return "STOP"
     
 
@@ -1213,7 +1501,7 @@ class Nav2Processing:
         return "STOP"
 
     def on_enter_S2(self):
-        if self.run_sub_state_machine(['L2F', 'F2M', 'F2S', 'R2F', 'R2A', 'F2N']):
+        if self.run_sub_state_machine(['L2F', 'F2M', 'R2S', 'R2F', 'R2A', 'F2N']):
             self.set_main_state("MID12")
         return "STOP"
     
@@ -1223,7 +1511,7 @@ class Nav2Processing:
         return "STOP"
     
     def on_enter_S4(self):
-        if self.run_sub_state_machine(['F2N', 'L2F', 'F2N']):
+        if self.run_sub_state_machine(['F2N', 'L2H', 'F2N', 'L2H', 'F2N']):
             self.set_main_state("MID14")
         return "STOP"
     
@@ -1241,14 +1529,14 @@ class Nav2Processing:
         return "STOP"
 
     def on_enter_D11_4(self): #OK
-        if self.run_sub_state_machine(['R2F', 'R2A', 'F2N', 'L2F', 'F2N']):
+        if self.run_sub_state_machine(['R2F', 'L2A', 'F2N', 'L2F', 'F2N']):
             self.set_main_state("MID24")
         return "STOP"
     
 
     # D12
     def on_enter_D12_1(self): #OK
-        if self.run_sub_state_machine(['F2N', 'R2F', 'R2A', 'F2N']):
+        if self.run_sub_state_machine(['F2N', 'R2H', 'F2N', 'R2H', 'F2N']):
             self.set_main_state("MID21")
         return "STOP"
     
@@ -1258,32 +1546,34 @@ class Nav2Processing:
         return "STOP"
 
     def on_enter_D12_4(self): #OK
-        if self.run_sub_state_machine(['F2N', 'L2F', 'L2N', 'F2N']):
+        if self.run_sub_state_machine(['F2N', 'R2F', 'F2N', 'L2H', 'F2N', 'L2H', 'F2N']):
             self.set_main_state("MID24")
         return "STOP"
     
     
     # D13
     def on_enter_D13_1(self): #OK
-        if self.run_sub_state_machine(["L2A", "F2N", "R2F", "R2A", "F2N"]):
+        self.move("F", 0.2)
+        if self.run_sub_state_machine(["L2F", "L2A", "F2N", "R2F", "F2N", "R2H"]):
             self.set_main_state("MID21")
         return "STOP"
     
     def on_enter_D13_2(self): #OK
         if self.run_sub_state_machine(['F2MvCv', 'R2S', 'R2A', 'F2N']):
-            self.set_main_state("MID23")
+            self.set_main_state("MID22")
         return "STOP"
 
     def on_enter_D13_4(self): #OK
-        if self.run_sub_state_machine(['F2N', 'R2F', 'F2N', 'L2F', 'L2A', 'F2N']):
+        if self.run_sub_state_machine(['F2Cv', 'R2F', 'F2N', 'L2F', 'F2N']):
             self.set_main_state("MID24")
         return "STOP"
 
 
     # D14
     def on_enter_D14_1(self): #OK
-        if self.run_sub_state_machine(['L2A', 'F2Cc', 'L2A', 'F2N', 'R2F', 'R2A', 'F2N']):
-            self.set_main_state("MID23")
+        if self.run_sub_state_machine(['L2F', 'F2N', 'R2H', 'F2N', 'R2H', 'F2N', 'R2H', 'F2N', 'R2H', 'F2N']):
+            self.move("F", 0.5)
+            self.set_main_state("MID21")
         return "STOP"
         
     def on_enter_D14_2(self): #OK
@@ -1292,57 +1582,6 @@ class Nav2Processing:
         return "STOP"
     
     def on_enter_D14_3(self): #OK
-        if self.run_sub_state_machine(["F2M", "R2S", "F2N"]):
-            self.set_main_state("MID21")
+        if self.run_sub_state_machine(["L2F", "F2Cv", "R2F", "F2Cv", "R2M", "R2S", "R2A", "F2N"]):
+            self.set_main_state("MID23")
         return "STOP"
-
-
-
-
-    # D21
-    def on_enter_D21_F(self):
-        if self.run_sub_state_machine(['F2Cc', 'F2Cv', 'L2Cc', 'L2Cv']):
-            self.set_main_state("FINAL")
-        return "STOP"
-    
-    # D24
-    def on_enter_D24_F(self):
-        if self.run_sub_state_machine(['F2Cc', 'F2Cv', 'R2Cc', 'R2Cv']):
-            self.set_main_state("FINAL")
-        return "STOP"
-    
-
-    # D22
-    def on_enter_D22_1(self):
-        if self.run_sub_state_machine([]):
-            self.set_main_state("FINAL")
-        return "STOP"
-    
-    def on_enter_D22_3(self):
-        if self.run_sub_state_machine([]):
-            self.set_main_state("FINAL")
-        return "STOP"
-    
-    def on_enter_D22_4(self):
-        if self.run_sub_state_machine([]):
-            self.set_main_state("FINAL")
-        return "STOP"
-    
-
-    # D23
-    def on_enter_D23_1(self):
-        if self.run_sub_state_machine([]):
-            self.set_main_state("FINAL")
-        return "STOP"
-    
-    def on_enter_D23_2(self):
-        if self.run_sub_state_machine([]):
-            self.set_main_state("FINAL")
-        return "STOP"
-    
-    def on_enter_D23_4(self):
-        if self.run_sub_state_machine([]):
-            self.set_main_state("FINAL")
-        return "STOP"
-    
-
