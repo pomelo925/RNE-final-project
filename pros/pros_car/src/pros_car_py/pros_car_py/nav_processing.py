@@ -456,80 +456,6 @@ class Nav2Processing:
             self.print_status("STOP", f"bbox_area_ratio: {bbox_area_ratio:.2f} (threshold reached)")
             return "STOP"
 
-    def RGBcam_nav_unity_door_random(self):
-        # 1. 先判斷是否有辨識到 pikachu
-        detected_list = self.ros_communicator.get_latest_yolo_detection_list()
-        image_width = 640
-        image_height = 480
-        image_area = image_width * image_height
-        image_center_x = image_width // 2
-
-        bbox_center_range_ratio = 0.06
-        pikachu_area_threshold = 0.06
-        obstacle_x_offset = 30
-
-        SEARCH_ROTATION_ACTION = "COUNTERCLOCKWISE_ROTATION"
-        ALIGN_ROTATE_LEFT_ACTION = "COUNTERCLOCKWISE_ROTATION_SLOW"
-        ALIGN_ROTATE_RIGHT_ACTION = "CLOCKWISE_ROTATION_SLOW"
-
-        # 若有 pikachu，直接用 living_room_random 邏輯
-        if detected_list and hasattr(detected_list, "objects"):
-            pikachu_objects = [obj for obj in detected_list.objects if obj.label == "pikachu"]
-            if pikachu_objects:
-                target = max(pikachu_objects, key=lambda obj: (obj.x2 - obj.x1) * (obj.y2 - obj.y1))
-                bbox_x1 = target.x1
-                bbox_x2 = target.x2
-                center_range_px = int(image_width * bbox_center_range_ratio)
-                if not (bbox_x1 <= image_center_x + center_range_px and bbox_x2 >= image_center_x - center_range_px):
-                    if target.cx < image_center_x:
-                        self.print_status(ALIGN_ROTATE_LEFT_ACTION, "align left")
-                        return ALIGN_ROTATE_LEFT_ACTION
-                    else:
-                        self.print_status(ALIGN_ROTATE_RIGHT_ACTION, "align right")
-                        return ALIGN_ROTATE_RIGHT_ACTION
-                bbox_area = (target.x2 - target.x1) * (target.y2 - target.y1)
-                bbox_area_ratio = bbox_area / image_area
-                self.print_status("FORWARD", f"bbox_area_ratio: {bbox_area_ratio:.2f}")
-                if bbox_area_ratio < pikachu_area_threshold:
-                    obstacle_objects = [
-                        obj for obj in detected_list.objects
-                        if obj.label != "pikachu" and (
-                            abs(obj.x1 - image_center_x) < obstacle_x_offset or
-                            abs(obj.x2 - image_center_x) < obstacle_x_offset
-                        )
-                    ]
-                    if obstacle_objects:
-                        def closest_edge_to_center(obj):
-                            return min(abs(obj.x1 - image_center_x), abs(obj.x2 - image_center_x))
-                        nearest_obstacle = min(obstacle_objects, key=closest_edge_to_center)
-                        if abs(nearest_obstacle.x1 - image_center_x) < abs(nearest_obstacle.x2 - image_center_x):
-                            self.print_status(ALIGN_ROTATE_RIGHT_ACTION, "avoid obstacle: left edge")
-                            return ALIGN_ROTATE_RIGHT_ACTION
-                        else:
-                            self.print_status(ALIGN_ROTATE_LEFT_ACTION, "avoid obstacle: right edge")
-                            return ALIGN_ROTATE_LEFT_ACTION
-                    return "FORWARD"
-                else:
-                    self.print_status("STOP", f"bbox_area_ratio: {bbox_area_ratio:.2f} (threshold reached)")
-                    return "STOP"
-
-        # 2. State machine
-        state_name = self.get_current_state() # 取得目前 state 名稱
-        state_func = getattr(self, f"on_enter_{state_name}", None) # 動態取得對應的 state function
-
-        polygon_list = self.ros_communicator.get_latest_polygon_list()
-        
-        if state_func is not None:
-            # 呼叫 state function，傳入 polygon_list，並取得 action
-            action = state_func(polygon_list)
-        else:
-            action = "STOP"
-        return action
-
-    def RGBcam_nav_unity_pikachu(self):
-        action = "STOP"
-        return action
-
 
     def get_current_state(self):
         return self._current_state
@@ -561,140 +487,862 @@ class Nav2Processing:
         time.sleep(duration)
         self.ros_communicator.publish_car_control("STOP")
 
-    ##### --- state machine --- #####
-
-    ### --- 檢測狀態 --- ###
-    # 這個階段的狀態主要用於尋找與檢測目標點。
-    # 這裡狀態將依序進行：START -> MID1 -> MID2 -> FINAL。
     
-    def on_enter_START(self, polygon_list):
+    def track_pikachu(self, pikachu_area_threshold=0.06):
         """
-        只判斷一次，有無 polygon list：
-        - 沒有，則 BACKWARD 1s，並 STOP
-        - 有，若頂點皆在畫面右側，則順時針轉 1s 並 STOP；左側則逆時針轉 1s 並 stop。(只看 x 座標)
+        共用追蹤 pikachu 的邏輯，回傳 (action, info_dict)
+        info_dict 內容包含：bbox_area_ratio, align_action, obstacle_action, found_pikachu
         """
-        
-        # 沒有 polygon list
-        if not polygon_list or not hasattr(polygon_list, "points") or not polygon_list.points:
-            self.move("R", 0.2)
-            new_polygon_list = self.ros_communicator.get_latest_polygon_list()
+        image_width = 640
+        image_height = 480
+        image_area = image_width * image_height
+        image_center_x = image_width // 2
+        bbox_center_range_ratio = 0.06
+        obstacle_x_offset = 30
 
-            # 檢測目標：D4
-            if new_polygon_list.len>=5:
-                self.move("R", 0.3)
-                self.move("F", 2.2)
-                self.move("S", 0.2)
-                self.move("L", 0.5)
-                self.move("F", 0.6)
-                self.set_current_state("MID1")
-                return "STOP"
+        SEARCH_ROTATION_ACTION = "COUNTERCLOCKWISE_ROTATION"
+        ALIGN_ROTATE_LEFT_ACTION = "COUNTERCLOCKWISE_ROTATION_SLOW"
+        ALIGN_ROTATE_RIGHT_ACTION = "CLOCKWISE_ROTATION_SLOW"
 
-            # 檢測目標：D1
+        detected_list = self.ros_communicator.get_latest_yolo_detection_list()
+        info = {
+            "bbox_area_ratio": None,
+            "align_action": None,
+            "obstacle_action": None,
+            "found_pikachu": False,
+        }
+
+        if not detected_list or not hasattr(detected_list, "objects"):
+            return SEARCH_ROTATION_ACTION, info
+
+        pikachu_objects = [obj for obj in detected_list.objects if obj.label == "pikachu"]
+        if not pikachu_objects:
+            return SEARCH_ROTATION_ACTION, info
+
+        info["found_pikachu"] = True
+        target = max(pikachu_objects, key=lambda obj: (obj.x2 - obj.x1) * (obj.y2 - obj.y1))
+        bbox_x1 = target.x1
+        bbox_x2 = target.x2
+        center_range_px = int(image_width * bbox_center_range_ratio)
+
+        # 檢查目標邊界框是否在畫面中心範圍內
+        if not (bbox_x1 <= image_center_x + center_range_px and bbox_x2 >= image_center_x - center_range_px):
+            if target.cx < image_center_x:
+                info["align_action"] = ALIGN_ROTATE_LEFT_ACTION
+                return ALIGN_ROTATE_LEFT_ACTION, info
             else:
-                self.move("L", 0.7)
-                self.move("F", 2.2)
-                self.move("S", 0.2)
-                self.move("R", 0.5)
-                self.move("F", 0.6)
-                self.set_current_state("MID1")
-                return "STOP"
-        
-        # 起初就有 polygon list
+                info["align_action"] = ALIGN_ROTATE_RIGHT_ACTION
+                return ALIGN_ROTATE_RIGHT_ACTION, info
+
+        bbox_area = (target.x2 - target.x1) * (target.y2 - target.y1)
+        bbox_area_ratio = bbox_area / image_area
+        info["bbox_area_ratio"] = bbox_area_ratio
+
+        if bbox_area_ratio < pikachu_area_threshold:
+            obstacle_objects = [
+                obj for obj in detected_list.objects
+                if obj.label != "pikachu" and (
+                    abs(obj.x1 - image_center_x) < obstacle_x_offset or
+                    abs(obj.x2 - image_center_x) < obstacle_x_offset
+                )
+            ]
+            if obstacle_objects:
+                def closest_edge_to_center(obj):
+                    return min(abs(obj.x1 - image_center_x), abs(obj.x2 - image_center_x))
+                nearest_obstacle = min(obstacle_objects, key=closest_edge_to_center)
+                if abs(nearest_obstacle.x1 - image_center_x) < abs(nearest_obstacle.x2 - image_center_x):
+                    info["obstacle_action"] = ALIGN_ROTATE_RIGHT_ACTION
+                    return ALIGN_ROTATE_RIGHT_ACTION, info
+                else:
+                    info["obstacle_action"] = ALIGN_ROTATE_LEFT_ACTION
+                    return ALIGN_ROTATE_LEFT_ACTION, info
+            return "FORWARD", info
         else:
-            ## 判斷所有頂點的 x 座標是否都在畫面右側或左側
-            x_list = [p.x for p in polygon_list.points]
-            
-            # 檢測目標：D3
-            if all(x > 640//2 for x in x_list):
-                self.move("R", 0.5)
-                self.move("F", 0.6)
-                self.move("S", 0.5)
-                self.move("L", 0.5)
-                self.move("F", 0.6)
-                self.set_current_state("MID1")
-                return "STOP"
-            
-            # 檢測目標：D2
+            return "STOP", info
+
+    def RGBcam_nav_unity_pikachu(self):
+        action, info = self.track_pikachu(pikachu_area_threshold=0.06)
+        # 可根據 info 印出 debug 訊息
+        self.print_status(action, f"bbox_area_ratio: {info['bbox_area_ratio']}")
+        if not info["found_pikachu"]:
+            self.move("F", 0.2)
+        return action
+
+    def RGBcam_nav_unity_door_random(self):
+        # 1. 若有 pikachu，直接 track_pikachu
+        action, info = self.track_pikachu(pikachu_area_threshold=0.06)
+        if info["found_pikachu"]:
+            self.print_status(action, f"bbox_area_ratio: {info['bbox_area_ratio']}")
+            return action
+
+        # 2. State machine
+        main_state = self.get_main_state()
+        state_func = getattr(self, f"on_enter_{main_state}", None)
+        if state_func is not None:
+            action = state_func()
+        else:
+            action = "STOP"
+        return action
+    
+    ### === 狀態機內部呼叫函數 === ###
+
+    def get_next_main_state(self, current):
+        order = ['START', 'MID1', 'MID2', 'END']
+        idx = order.index(current)
+        return order[idx + 1] if idx + 1 < len(order) else 'END'
+
+    def get_main_state(self):
+        return getattr(self, "_main_state", "START")
+
+    def set_main_state(self, state):
+        self._main_state = state
+
+    def get_sub_state(self):
+        return getattr(self, "_sub_state", 0)
+
+    def set_sub_state(self, idx):
+        self._sub_state = idx
+
+    def step_state_machine(self):
+        """
+        執行目前 main_state 的 sub_state，並根據回傳值決定是否進入下一 sub_state 或 main_state
+        """
+        main_state = self.get_main_state()
+        sub_state_idx = self.get_sub_state()
+        sub_states = self.main_state_sequences.get(main_state, [])
+        if sub_state_idx >= len(sub_states):
+            # 進入下一個 main_state
+            next_main = self.get_next_main_state(main_state)
+            self.set_main_state(next_main)
+            self.set_sub_state(0)
+            return
+        sub_state_name = sub_states[sub_state_idx]
+        func = getattr(self, sub_state_name, None)
+        if func:
+            finished = func()
+            if finished:
+                self.set_sub_state(sub_state_idx + 1)
+
+    ### === 大狀態與子狀態機架構 === ###
+
+    def run_state_machine(self):
+        """
+        執行目前大狀態（on_enter_xxx），大狀態 function 內可直接呼叫 self.run_sub_state_machine([sub1, sub2, ...])
+        """
+        main_state = self.get_main_state()
+        func = getattr(self, f"on_enter_{main_state}", None)
+        if func:
+            return func()
+        else:
+            return "STOP"
+
+    def run_sub_state_machine(self, sub_state_list):
+        """
+        執行一組子狀態序列，依序呼叫 function，遇到未完成的子狀態即停止，回傳該子狀態的結果
+        子狀態 function 必須回傳 True(完成) 或 False(未完成)
+        """
+        if not hasattr(self, "_sub_state_idx"):
+            self._sub_state_idx = 0
+        while self._sub_state_idx < len(sub_state_list):
+            sub_func_name = sub_state_list[self._sub_state_idx]
+            func = getattr(self, sub_func_name, None)
+            if func:
+                # print(f"Running sub-state: {sub_func_name}")
+                finished = func()
+                if finished:
+                    self._sub_state_idx += 1
+                    continue
+                else:
+                    return
             else:
-                self.move("L", 0.5)
-                self.move("F", 0.6)
-                self.move("S", 0.5)
-                self.move("R", 0.5)
-                self.move("F", 0.6)
-                self.set_current_state("MID1")
+                self._sub_state_idx += 1
+        self._sub_state_idx = 0
+        return True
+
+    ### --- 狀態機條件判斷庫 --- ###
+    def polygon_exist(self):
+        """
+        檢查是否有多邊形存在
+        """
+        polygon = self.ros_communicator.get_latest_polygon_list()
+        return polygon is not None and len(polygon.points) > 0
+    
+
+    def get_polygon_type(self):
+        """
+        獲取目前 polygon 的類型：
+        - "NONE"：沒有 polygon 存在
+        - "MULTIPLE"：多個 polygon 存在
+        - "CONVEX"：單個凸多邊形
+        - "CONCAVE_14"：單個凹多邊形，類型 14
+        - "CONCAVE_23"：單個凹多邊形，類型 23 
+        """
+        if not self.polygon_exist():
+            return "NONE"
+        
+        polygon = self.ros_communicator.get_latest_polygon_list()
+        if polygon.num > 1:
+            return "MULTIPLE"
+        
+
+        def cross(o, a, b):
+            return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
+
+        def is_convex(points):
+            n = len(points)
+            if n < 3:
+                return False
+            sign = None
+            for i in range(n):
+                o, a, b = points[i], points[(i + 1) % n], points[(i + 2) % n]
+                cp = cross(o, a, b)
+                if cp != 0:
+                    if sign is None:
+                        sign = cp > 0
+                    elif (cp > 0) != sign:
+                        return False
+            return True
+        
+        points = polygon.points[:polygon.len[0]]
+        coords = [(p.x, p.y) for p in points]
+
+        if is_convex(coords):
+            return "CONVEX"
+        else:
+            return "CONCAVE_14" if len(coords) <= 7 else "CONCAVE_23"
+    
+
+    ### --- 子狀態 function --- ###
+    def F2N(self):
+        """
+        往前走，直至看不見任何 polygon。
+        """
+        if(self.polygon_exist()):
+            self.ros_communicator.publish_car_control("FORWARD")
+            return False
+        
+        self.ros_communicator.publish_car_control("STOP")
+        return True
+
+    def L2F(self):
+        """
+        左轉，直至 polygon 存在頂點佔據畫面最右側。
+        """
+        X_TOLERANCE = 1
+        polygon = self.ros_communicator.get_latest_polygon_list()
+        if not polygon or not polygon.points:
+            self.ros_communicator.publish_car_control("COUNTERCLOCKWISE_ROTATION_SLOW")
+            return False
+
+        for point in polygon.points:
+            if point.x >= 639 - X_TOLERANCE:
+                self.ros_communicator.publish_car_control("STOP")
+                return True
+
+        self.ros_communicator.publish_car_control("COUNTERCLOCKWISE_ROTATION_SLOW")
+        return False
+
+    def R2F(self):
+        """
+        右轉，直至 polygon 存在頂點佔據畫面最左側。
+        """
+        X_TOLERANCE = 1
+        polygon = self.ros_communicator.get_latest_polygon_list()
+        if not polygon or not polygon.points:
+            self.ros_communicator.publish_car_control("CLOCKWISE_ROTATION_SLOW")
+            return False
+
+        for point in polygon.points:
+            if point.x <= 1 + X_TOLERANCE:
+                self.ros_communicator.publish_car_control("STOP")
+                return True
+
+        self.ros_communicator.publish_car_control("CLOCKWISE_ROTATION_SLOW")
+        return False
+    
+    def L2N(self):
+        """
+        左轉，直至不存在任何 polygon。
+        """
+        if self.polygon_exist():
+            self.ros_communicator.publish_car_control("COUNTERCLOCKWISE_ROTATION_SLOW")
+            return False
+
+        self.ros_communicator.publish_car_control("STOP")
+        return True
+
+    def R2N(self):
+        """
+        右轉，直至不存在任何 polygon。
+        """
+        if self.polygon_exist():
+            self.ros_communicator.publish_car_control("CLOCKWISE_ROTATION_SLOW")
+            return False
+
+        self.ros_communicator.publish_car_control("STOP")
+        return True
+    
+    def F2M(self):
+        """
+        往前走，直至有多個 polygon 存在。
+        """
+        if not self.polygon_exist():
+            self.ros_communicator.publish_car_control("FORWARD")
+            return False
+        
+        if not self.get_polygon_type() == "MULTIPLE":
+            self.ros_communicator.publish_car_control("FORWARD")
+            return False
+        
+        self.ros_communicator.publish_car_control("STOP")
+        return True
+    
+    def F2S(self):
+        """
+        往前走，直至 polygon 數量為 1 個。
+        """
+        if not self.polygon_exist():
+            self.ros_communicator.publish_car_control("FORWARD")
+            return False
+        
+        if self.ros_communicator.get_latest_polygon_list().num != 1:
+            self.ros_communicator.publish_car_control("FORWARD")
+            return False
+        
+        self.ros_communicator.publish_car_control("STOP")
+        return True
+    
+    def L2S(self):
+        """
+        左轉，直至 polygon 數量為 1 個。
+        """
+        if not self.polygon_exist():
+            self.ros_communicator.publish_car_control("COUNTERCLOCKWISE_ROTATION_SLOW")
+            return False
+        
+        if self.get_polygon_type() != "CONVEX":
+            self.ros_communicator.publish_car_control("COUNTERCLOCKWISE_ROTATION_SLOW")
+            return False
+        
+        self.ros_communicator.publish_car_control("STOP")
+        return True
+    
+    def R2S(self):
+        """
+        右轉，直至 polygon 數量為 1 個。
+        """
+        if not self.polygon_exist():
+            self.ros_communicator.publish_car_control("CLOCKWISE_ROTATION_SLOW")
+            return False
+        
+        if self.get_polygon_type() != "CONVEX":
+            self.ros_communicator.publish_car_control("CLOCKWISE_ROTATION_SLOW")
+            return False
+        
+        self.ros_communicator.publish_car_control("STOP")
+        return True
+
+    def F2FR(self):
+        """
+        往前走，直至 polygon 存在頂點佔據畫面最右側。
+        """
+        X_TOLERANCE = 1
+        polygon = self.ros_communicator.get_latest_polygon_list()
+        if not polygon or not polygon.points:
+            self.ros_communicator.publish_car_control("FORWARD")
+            return False
+
+        for point in polygon.points:
+            if point.x >= 639 - X_TOLERANCE:
+                self.ros_communicator.publish_car_control("STOP")
+                return True
+
+        self.ros_communicator.publish_car_control("FORWARD")
+        return False
+
+    
+    def F2FL(self):
+        """
+        往前走，直至 polygon 存在頂點佔據畫面最左側。
+        """
+        X_TOLERANCE = 1
+        polygon = self.ros_communicator.get_latest_polygon_list()
+        if not polygon or not polygon.points:
+            self.ros_communicator.publish_car_control("FORWARD")
+            return False
+
+        for point in polygon.points:
+            if point.x <= 1 + X_TOLERANCE:
+                self.ros_communicator.publish_car_control("STOP")
+                return True
+
+        self.ros_communicator.publish_car_control("FORWARD")
+        return False
+    
+
+    def R2A(self):
+        """
+        往右轉，直至 polygon 最上方兩個頂點的 y 距離差小於 tolerance。
+        """
+        Y_TOLERANCE = 5
+        polygon = self.ros_communicator.get_latest_polygon_list()
+        if not polygon or not polygon.points or len(polygon.points) < 2:
+            self.ros_communicator.publish_car_control("CLOCKWISE_ROTATION_SLOW")
+            return False
+
+        # 取出所有點的 y 值，找出最小的兩個（最上方）
+        sorted_points = sorted(polygon.points, key=lambda p: p.y)
+        top_points = sorted_points[:2]
+        y_diff = abs(top_points[0].y - top_points[1].y)
+
+        if y_diff <= Y_TOLERANCE:
+            self.ros_communicator.publish_car_control("STOP")
+            return True
+
+        self.ros_communicator.publish_car_control("CLOCKWISE_ROTATION_SLOW")
+        return False
+    
+    def L2A(self):
+        """
+        往左轉，直至 polygon 最上方兩個頂點的 y 距離差小於 tolerance。
+        """
+        Y_TOLERANCE = 5
+        polygon = self.ros_communicator.get_latest_polygon_list()
+        if not polygon or not polygon.points or len(polygon.points) < 2:
+            self.ros_communicator.publish_car_control("COUNTERCLOCKWISE_ROTATION_SLOW")
+            return False
+
+        # 取出所有點的 y 值，找出最小的兩個（最上方）
+        sorted_points = sorted(polygon.points, key=lambda p: p.y)
+        top_points = sorted_points[:2]
+        y_diff = abs(top_points[0].y - top_points[1].y)
+
+        if y_diff <= Y_TOLERANCE:
+            self.ros_communicator.publish_car_control("STOP")
+            return True
+
+        self.ros_communicator.publish_car_control("COUNTERCLOCKWISE_ROTATION_SLOW")
+        return False
+    
+    def L2M(self):
+        """
+        往左轉，直至存在多個 polygon。
+        """
+        if not self.polygon_exist():
+            self.ros_communicator.publish_car_control("COUNTERCLOCKWISE_ROTATION_SLOW")
+            return False
+        
+        if self.get_polygon_type() != "MULTIPLE":
+            self.ros_communicator.publish_car_control("COUNTERCLOCKWISE_ROTATION_SLOW")
+            return False
+        
+        self.ros_communicator.publish_car_control("STOP")
+        return True
+    
+    def R2M(self):
+        """
+        往右轉，直至存在多個 polygon。
+        """
+        if not self.polygon_exist():
+            self.ros_communicator.publish_car_control("CLOCKWISE_ROTATION_SLOW")
+            return False
+        
+        if self.get_polygon_type() != "MULTIPLE":
+            self.ros_communicator.publish_car_control("CLOCKWISE_ROTATION_SLOW")
+            return False
+        
+        self.ros_communicator.publish_car_control("STOP")
+        return True
+    
+    def F2C14(self):
+        """
+        往前走，直至存在類型 14 的 Concave Polygon。
+        """
+        if not self.polygon_exist():
+            self.ros_communicator.publish_car_control("FORWARD")
+            return False
+        
+        if self.get_polygon_type() != "CONCAVE_14":
+            self.ros_communicator.publish_car_control("FORWARD")
+            return False
+        
+        self.ros_communicator.publish_car_control("STOP")
+        return True
+    
+    def F2C23(self):
+        """
+        往前走，直至存在類型 23 的 Concave Polygon。
+        """
+        if not self.polygon_exist():
+            self.ros_communicator.publish_car_control("FORWARD")
+            return False
+        
+        if self.get_polygon_type() != "CONCAVE_23":
+            self.ros_communicator.publish_car_control("FORWARD")
+            return False
+        
+        self.ros_communicator.publish_car_control("STOP")
+        return True
+    
+    def F2Cc(self):
+        """
+        往前走，直至存在 Concave Polygon（類型 14 或 23）。
+        """
+        if not self.polygon_exist():
+            self.ros_communicator.publish_car_control("FORWARD")
+            return False
+        
+        polygon_type = self.get_polygon_type()
+        if polygon_type not in ["CONCAVE_14", "CONCAVE_23"]:
+            self.ros_communicator.publish_car_control("FORWARD")
+            return False
+        
+        self.ros_communicator.publish_car_control("STOP")
+        return True
+    
+    def F2Cv(self):
+        """
+        往前走，直至存在 Convex Polygon。
+        """
+        if not self.polygon_exist():
+            self.ros_communicator.publish_car_control("FORWARD")
+            return False
+        
+        if self.get_polygon_type() != "CONVEX":
+            self.ros_communicator.publish_car_control("FORWARD")
+            return False
+        
+        self.ros_communicator.publish_car_control("STOP")
+        return True
+    
+    def F2MvCv(self):
+        """
+        往前走，直至存在 Convex Polygon 或多個 Polygon。
+        """
+        if not self.polygon_exist():
+            self.ros_communicator.publish_car_control("FORWARD")
+            return False
+        
+        polygon_type = self.get_polygon_type()
+        if polygon_type not in ["CONVEX", "MULTIPLE"]:
+            self.ros_communicator.publish_car_control("FORWARD")
+            return False
+        
+        self.ros_communicator.publish_car_control("STOP")
+        return True
+
+
+    ### --- 定義大狀態 function --- ###
+    ## --- 主狀態 --- ##
+    def on_enter_START(self):
+        if self.polygon_exist():
+            polygon = self.ros_communicator.get_latest_polygon_list()
+
+            if all(point.x < 320 for point in polygon.points):
+                print("S2")
+                self.set_main_state("S2") # D2: 都在左側
+                return "STOP"
+            else:
+                print("S3")
+                self.set_main_state("S3") # D3: 都在右側
+                return "STOP"
+        
+        else:
+            while (not self.R2F()): # 轉向右側檢查
+                pass
+
+            if self.get_polygon_type() == "CONVEX": # D1：凹多邊形(另側)
+                print("S1")
+                self.set_main_state("S1")
+                return "STOP"
+            else:
+                print("S4")
+                self.set_main_state("S4") # D4: 凹多邊形
                 return "STOP"
 
-    def on_enter_MID1(self, polygon_list):
-        # 只做決策
+
+    def on_enter_MID11(self):
+        while (not self.R2F()):
+            pass
+
+        if self.get_polygon_type() == "CONCAVE_23":
+            print("D11_2")
+            self.set_main_state("D11_2")
+            return "STOP"
+        else:
+            while(not self.R2A()):
+                pass
+            
+            self.move("F", 3)  
+            self.move("S", 0.3)
+            if self.get_polygon_type() == "CONCAVE_23":
+                print("D11_3")
+                self.set_main_state("D11_3")
+                return "STOP"
+            else:
+                print("D11_4")
+                self.set_main_state("D11_4")
+                return "STOP"
+
+    def on_enter_MID12(self):
+        while (not self.L2F()):
+            pass
+        
+        if self.get_polygon_type() == "CONCAVE_14":
+            print("D12_1")
+            self.set_main_state("D12_1")
+            return "STOP"
+        
+        else:
+            while(not self.R2N()):
+                pass
+            
+            while(not self.R2F()):
+                pass
+            
+            if self.get_polygon_type() == "CONCAVE_23":
+                print("D12_3")
+                self.set_main_state("D12_3")
+                return "STOP"
+            else:
+                print("D12_4")
+                self.set_main_state("D12_4")
+                return "STOP"
+
+    def on_enter_MID13(self):
+        while (not self.R2F()):
+            pass
+
+        if self.get_polygon_type() == "CONCAVE_14":
+            print("D13_4")
+            self.set_main_state("D13_4")
+            return "D13_4"
+        
+        while(not self.L2F()):
+            pass
+        
+        while(not self.L2A()):
+            pass
+
+        while(not self.F2N()):
+            pass
+
+        while(not self.L2F()):
+            pass
+
+        if self.get_polygon_type() == "CONCAVE_23":
+            print("D13_2")
+            self.set_main_state("D13_2")
+            return "STOP"
+        else:
+            print("D13_1")
+            self.set_main_state("D13_1")
+            return "STOP"
+        
+
+    def on_enter_MID14(self):
+        while (not self.L2F()):
+            pass
+        
+        self.move("F", 1) 
+        self.move("S", 0.3) 
+
+        if self.get_polygon_type() == "CONCAVE_23":
+            print("D14_3")
+            self.set_main_state("D14_3")
+        else:
+            while(not self.L2A()):
+                pass
+            
+            self.move("F", 3.5)
+            self.move("S", 0.3)
+
+            while(not self.L2F()):
+                pass
+
+            if self.get_polygon_type() == "CONCAVE_23":
+                print("D14_2")
+                self.set_main_state("D14_2")
+                return "STOP"
+            else:
+                print("D14_1")
+                self.set_main_state("D14_1")
+                return "STOP"
+
         return "STOP"
 
-    def on_enter_MID2(self, polygon_list):
-        pass
+    def on_enter_MID21(self):
+        while (not self.R2F()):
+            pass
 
-    def on_enter_FINAL(self, polygon_list):
-        pass
-
+        while (not self.R2A()):
+            pass
+        
+        print("D21_F")
+        self.set_main_state("D21_F")
+        return "STOP"
     
-    ### --- 移動狀態 --- ###
-    # 這個階段的狀態僅做移動，並行走固定的路線。
-    # 所有行走路線為固定腳本，移動時間到就停止移動，並回到停留與檢測狀態。
+    def on_enter_MID24(self):
+        while (not self.L2F()):
+            pass
 
-    def on_enter_D11(self):
-        pass
+        while (not self.L2A()):
+            pass
+        
+        print("D24_F")
+        self.set_main_state("D24_F")
+        return "STOP"
 
-    def on_enter_D12(self):
-        pass
+    def on_enter_MID22(self):
+        return "STOP"
+    
+    def on_enter_MID23(self):
+        return "STOP"
+    
 
-    def on_enter_D13(self):
-        pass
 
-    def on_enter_D14(self):
-        pass
+    def on_enter_FINAL(self):
+        return "STOP"
+    
 
-    def on_enter_D21(self):
-        pass
+    ## --- 子情況 --- ##
+    # --- START --- #
+    def on_enter_S1(self):
+        if self.run_sub_state_machine(['L2N', 'L2F', 'F2N', 'R2F', 'F2N']):
+            self.set_main_state("MID11")
+        return "STOP"
 
-    def on_enter_D22(self):
-        pass
+    def on_enter_S2(self):
+        if self.run_sub_state_machine(['L2F', 'F2M', 'F2S', 'R2F', 'R2A', 'F2N']):
+            self.set_main_state("MID12")
+        return "STOP"
+    
+    def on_enter_S3(self):
+        if self.run_sub_state_machine(['R2F', 'F2M', 'F2S', 'L2F']):
+            self.set_main_state("MID13")
+        return "STOP"
+    
+    def on_enter_S4(self):
+        if self.run_sub_state_machine(['F2N', 'L2F', 'F2N']):
+            self.set_main_state("MID14")
+        return "STOP"
+    
+    
+    # --- MID --- #
+    # D11
+    def on_enter_D11_2(self): #OK
+        if self.run_sub_state_machine(['L2F', 'F2M', 'L2S', 'L2F', 'F2N']):
+            self.set_main_state("MID22")
+        return "STOP"
+    
+    def on_enter_D11_3(self): #OK
+        if self.run_sub_state_machine(["L2F", "F2M", "L2S", "F2N"]):
+            self.set_main_state("MID23")
+        return "STOP"
 
-    def on_enter_D23(self):
-        pass
+    def on_enter_D11_4(self): #OK
+        if self.run_sub_state_machine(['R2F', 'R2A', 'F2N', 'L2F', 'F2N']):
+            self.set_main_state("MID24")
+        return "STOP"
+    
 
-    def on_enter_D24(self):
-        pass
+    # D12
+    def on_enter_D12_1(self): #OK
+        if self.run_sub_state_machine(['F2N', 'R2F', 'R2A', 'F2N']):
+            self.set_main_state("MID21")
+        return "STOP"
+    
+    def on_enter_D12_3(self): #OK
+        if self.run_sub_state_machine(['F2M', 'L2S', 'L2F', 'F2N']):
+            self.set_main_state("MID23")
+        return "STOP"
 
-    def on_enter_D31(self):
-        pass
+    def on_enter_D12_4(self): #OK
+        if self.run_sub_state_machine(['F2N', 'L2F', 'L2N', 'F2N']):
+            self.set_main_state("MID24")
+        return "STOP"
+    
+    
+    # D13
+    def on_enter_D13_1(self): #OK
+        if self.run_sub_state_machine(["L2A", "F2N", "R2F", "R2A", "F2N"]):
+            self.set_main_state("MID21")
+        return "STOP"
+    
+    def on_enter_D13_2(self): #OK
+        if self.run_sub_state_machine(['F2MvCv', 'R2S', 'R2A', 'F2N']):
+            self.set_main_state("MID23")
+        return "STOP"
 
-    def on_enter_D32(self):
-        pass
+    def on_enter_D13_4(self): #OK
+        if self.run_sub_state_machine(['F2N', 'R2F', 'F2N', 'L2F', 'L2A', 'F2N']):
+            self.set_main_state("MID24")
+        return "STOP"
 
-    def on_enter_D33(self):
-        pass
 
-    def on_enter_D34(self):
-        pass
+    # D14
+    def on_enter_D14_1(self): #OK
+        if self.run_sub_state_machine(['L2A', 'F2Cc', 'L2A', 'F2N', 'R2F', 'R2A', 'F2N']):
+            self.set_main_state("MID23")
+        return "STOP"
+        
+    def on_enter_D14_2(self): #OK
+        if self.run_sub_state_machine(["F2MvCv", "R2M", "R2S", "R2F", "R2A", "F2N"]):
+            self.set_main_state("MID22")
+        return "STOP"
+    
+    def on_enter_D14_3(self): #OK
+        if self.run_sub_state_machine(["F2M", "R2S", "F2N"]):
+            self.set_main_state("MID21")
+        return "STOP"
 
-    def on_enter_D41(self):
-        pass
 
-    def on_enter_D42(self):
-        pass
 
-    def on_enter_D43(self):
-        pass
 
-    def on_enter_D44(self):
-        pass
+    # D21
+    def on_enter_D21_F(self):
+        if self.run_sub_state_machine(['F2Cc', 'F2Cv', 'L2Cc', 'L2Cv']):
+            self.set_main_state("FINAL")
+        return "STOP"
+    
+    # D24
+    def on_enter_D24_F(self):
+        if self.run_sub_state_machine(['F2Cc', 'F2Cv', 'R2Cc', 'R2Cv']):
+            self.set_main_state("FINAL")
+        return "STOP"
+    
 
-    def on_enter_D1F(self):
-        pass
+    # D22
+    def on_enter_D22_1(self):
+        if self.run_sub_state_machine([]):
+            self.set_main_state("FINAL")
+        return "STOP"
+    
+    def on_enter_D22_3(self):
+        if self.run_sub_state_machine([]):
+            self.set_main_state("FINAL")
+        return "STOP"
+    
+    def on_enter_D22_4(self):
+        if self.run_sub_state_machine([]):
+            self.set_main_state("FINAL")
+        return "STOP"
+    
 
-    def on_enter_D2F(self):
-        pass
+    # D23
+    def on_enter_D23_1(self):
+        if self.run_sub_state_machine([]):
+            self.set_main_state("FINAL")
+        return "STOP"
+    
+    def on_enter_D23_2(self):
+        if self.run_sub_state_machine([]):
+            self.set_main_state("FINAL")
+        return "STOP"
+    
+    def on_enter_D23_4(self):
+        if self.run_sub_state_machine([]):
+            self.set_main_state("FINAL")
+        return "STOP"
+    
 
-    def on_enter_D3F(self):
-        pass
-
-    def on_enter_D4F(self):
-        pass

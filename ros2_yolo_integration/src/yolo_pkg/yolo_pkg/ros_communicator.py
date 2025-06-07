@@ -221,25 +221,28 @@ class RosCommunicator(Node):
         # --- 多邊形處理 ---
         contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         polygon_img = masked_img.copy()
-        max_edges = 0
-        max_approx = None
+
+        point_list_msg = PointList()
+        polygon_lens = []
+        num_polygons = 0
 
         for cnt in contours:
             area = cv2.contourArea(cnt)
             if area < self.MIN_AREA:
                 continue
-            epsilon = 0.02 * cv2.arcLength(cnt, True)
+            epsilon = 0.01 * cv2.arcLength(cnt, True)
             approx = cv2.approxPolyDP(cnt, epsilon, True)
-            edges = len(approx)
-            # 如果邊數大於目前最大邊數，則更新
-            if edges > max_edges:
-                max_edges = edges
-                max_approx = approx
             # 畫多邊形邊界（綠色）
             cv2.polylines(polygon_img, [approx], True, (0, 255, 0), 2)
-            # 畫頂點（紅色）
+            # 畫頂點（紅色），並收集所有頂點
             for pt in approx:
                 cv2.circle(polygon_img, tuple(pt[0]), 6, (0, 0, 255), -1)
+                point_msg = Point()
+                point_msg.x = int(pt[0][0])
+                point_msg.y = int(pt[0][1])
+                point_list_msg.points.append(point_msg)
+            polygon_lens.append(len(approx))
+            num_polygons += 1
 
         # 發布多邊形圖像
         _, buffer_polygon = cv2.imencode('.jpg', polygon_img)
@@ -250,18 +253,9 @@ class RosCommunicator(Node):
         self.publish_data("polygon", polygon_msg)
         self.latest_polygon_image = polygon_msg
 
-        # 發布所有頂點的 x, y 以及 len
-        point_list_msg = PointList()
-        if max_approx is not None:
-            for pt in max_approx:
-                point_msg = Point()
-                point_msg.x = int(pt[0][0])
-                point_msg.y = int(pt[0][1])
-                point_list_msg.points.append(point_msg)
-            # 設定 len 為頂點數量
-            point_list_msg.len = len(point_list_msg.points)
-        else:
-            point_list_msg.len = 0
+        # 設定 len 為每個多邊形的頂點數，num 為多邊形數量
+        point_list_msg.len = polygon_lens
+        point_list_msg.num = num_polygons
 
         self.publish_data("edges", point_list_msg)
 
