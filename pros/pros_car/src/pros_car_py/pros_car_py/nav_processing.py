@@ -579,8 +579,16 @@ class Nav2Processing:
         action, info = self.track_pikachu(pikachu_area_threshold=0.06)
         # 可根據 info 印出 debug 訊息
         self.print_status(action, f"bbox_area_ratio: {info['bbox_area_ratio']}")
-        if not info["found_pikachu"]:
-            self.move("F", 0.2)
+        while ( not info["found_pikachu"]):
+            self.move("L", 0.1)
+            self.move("F", 8)
+            self.move("R", 0.4)
+            self.move("F", 8)
+            self.move("R", 0.1)
+            self.move("F", 8)
+            self.move("L", 0.1)
+            self.move("F", 8)
+            self.move("L", 0.1)
         return action
 
     def RGBcam_nav_unity_door_random(self):
