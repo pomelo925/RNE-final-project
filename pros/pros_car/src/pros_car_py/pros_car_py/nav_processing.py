@@ -290,6 +290,15 @@ class Nav2Processing:
         print("[MODE]\t\t|\t[INFO]")
         print(f"{mode.upper()}\t\t|\t{info}")
 
+    def check_and_handle_pikachu_interrupt(self, pikachu_area_threshold=0.3):
+        action, info = self.track_pikachu(pikachu_area_threshold=pikachu_area_threshold)
+        if info["found_pikachu"]:
+            self.print_status(action, f"bbox_area_ratio: {info['bbox_area_ratio']}")
+            self.set_main_state("DONE")  # 或你想跳到的狀態
+            self.ros_communicator.publish_car_control(action)
+            return True
+        return False
+
     def RGBcam_nav_unity_living_room_fixed(self):
         # 圖像設定
         image_width = 640
@@ -472,6 +481,7 @@ class Nav2Processing:
         """
         控制車輛執行指定動作或簡寫指令，持續 duration 秒。
         支援簡寫: F, R, L, B, S
+        若偵測到皮卡丘則立即中斷。
         """
         MOVE_SHORTCUT_MAP = {
             "F": "FORWARD",
@@ -480,12 +490,17 @@ class Nav2Processing:
             "B": "BACKWARD",
             "S": "STOP"
         }
-        
         action = MOVE_SHORTCUT_MAP.get(action_or_shortcut.upper(), action_or_shortcut)
-        
         self.ros_communicator.publish_car_control(action)
-        time.sleep(duration)
+        start_time = time.time()
+        while time.time() - start_time < duration:
+            # 每 0.1 秒檢查一次
+            if self.check_and_handle_pikachu_interrupt():
+                self.ros_communicator.publish_car_control("STOP")
+                return "PIKACHU_INTERRUPT"
+            time.sleep(0.1)
         self.ros_communicator.publish_car_control("STOP")
+        return "DONE"
 
     
     def track_pikachu(self, pikachu_area_threshold=0.06):
@@ -1172,7 +1187,7 @@ class Nav2Processing:
             while(not self.R2A()):
                 pass
             
-            self.move("F", 3)  
+            self.move("F", 2.3)  
             self.move("S", 0.3)
             if self.get_polygon_type() == "CONCAVE_23":
                 print("D11_3")
@@ -1247,7 +1262,7 @@ class Nav2Processing:
             while(not self.L2A()):
                 pass
             
-            self.move("F", 2)
+            self.move("F", 2.5)
             self.move("S", 0.3)
 
             while(not self.L2F()):
@@ -1278,12 +1293,12 @@ class Nav2Processing:
             self.set_main_state("DONE")
             return "STOP"
 
-        # Doot 3 
-        while (not self.R2F()):
-            pass
-
+        # Doot 3
         self.move("F", 1.5)
 
+        while (not self.R2F()):
+            pass
+        
         if self.get_polygon_type() == "CONCAVE_23":
             while (not self.F2Cc()):
                 pass
@@ -1308,7 +1323,7 @@ class Nav2Processing:
                 pass
             while (not self.F2N()): # 垂直出去
                 pass
-            while (not self.L2Cv()):
+            while (not self.L2F()):
                 pass
         self.set_main_state("DONE")
         return "STOP"
@@ -1327,10 +1342,12 @@ class Nav2Processing:
             self.set_main_state("DONE")
             return "STOP"
         
-        # Door 2 
+        # Door 2
+        self.move("F", 1.5)
+
         while (not self.L2F()):
             pass
-        self.move("F", 1.5)
+        
         if self.get_polygon_type() == "CONCAVE_23":
             print("D24_2")
             while (not self.F2Cc()):
@@ -1347,6 +1364,8 @@ class Nav2Processing:
         # Door 1
         else:
             print("D24_1")
+            while (not self.L2F()):
+                pass
             while (not self.F2N()):
                 pass
             while (not self.R2H()):
@@ -1357,7 +1376,7 @@ class Nav2Processing:
                 pass
             while (not self.F2N()): # 垂直出去
                 pass
-            while (not self.R2Cv()):
+            while (not self.R2F()):
                 pass
 
         self.set_main_state("DONE")
@@ -1381,7 +1400,7 @@ class Nav2Processing:
                 pass
             while (not self.F2N()):
                 pass # 垂直出去
-            while (not self.R2Cv()):
+            while (not self.R2F()):
                 pass
             self.set_main_state("DONE")
             return "STOP"
@@ -1403,13 +1422,18 @@ class Nav2Processing:
                 pass
             while (not self.F2N()):
                 pass
-            while (not self.L2Cv()):
+            while (not self.L2F()):
                 pass
             self.set_main_state("DONE")
             return "STOP"
         
         # Door 4
         print("D22_4")
+        while (not self.R2F()):
+            pass
+        while (not self.R2A()):
+            pass
+
         while( not self.F2N()):
             pass
         while (not self.L2H()):
@@ -1420,7 +1444,7 @@ class Nav2Processing:
             pass
         while (not self.F2N()):
             pass
-        while (not self.L2Cv()):
+        while (not self.L2F()):
             pass
         self.set_main_state("DONE")
         return "STOP"
@@ -1433,17 +1457,13 @@ class Nav2Processing:
 
         if self.get_polygon_type() != "CONVEX":
             print("D23_4")
-            while (not self.F2N()):
-                pass
             while (not self.L2H()):
-                pass
-            while (not self.F2N()):
                 pass
             while (not self.L2F()):
                 pass
             while (not self.F2N()):
                 pass # 垂直出去
-            while (not self.L2Cv()):
+            while (not self.L2F()):
                 pass
             self.set_main_state("DONE")
             return "STOP"
@@ -1465,7 +1485,7 @@ class Nav2Processing:
                 pass
             while (not self.F2N()):
                 pass
-            while (not self.R2Cv()):
+            while (not self.R2F()):
                 pass
             self.set_main_state("DONE")
             return "STOP"
@@ -1482,11 +1502,138 @@ class Nav2Processing:
             pass
         while (not self.F2N()):
             pass
-        while (not self.R2Cv()):
+        while (not self.R2F()):
             pass
         self.set_main_state("DONE")
         return "STOP"
     
+    def on_enter_MID21_open(self):
+        print("<- MID21 ->")
+        while (not self.R2F()):
+            if self.check_and_handle_pikachu_interrupt():
+                return "STOP"
+            pass
+
+        # 1 -> 2 -> 3 -> 4
+        while True:
+            if self.check_and_handle_pikachu_interrupt():
+                return "STOP"
+            
+            # Door 2
+            self.move("F", 2)
+            self.move("L", 1)
+            self.move("R", 1)
+
+            # Door 3
+            self.move("F", 2)
+            self.move("L", 1)
+            self.move("R", 1)
+
+            # Door 4
+            self.move("F", 2)
+            self.move("L", 0.3)
+            self.move("F", 2)
+            self.move("L", 1)
+            self.move("R", 1)
+
+    
+    def on_enter_MID22_open(self):
+        print("<- MID22 ->")
+        while (not self.L2F()):
+            if self.check_and_handle_pikachu_interrupt():
+                return "STOP"
+            pass
+        
+        while True:
+            if self.check_and_handle_pikachu_interrupt():
+                return "STOP"
+            
+            # Door 1
+            self.move("F", 2)
+            self.move("R", 0.3)
+            self.move("F", 2)
+            self.move("R", 1)
+            self.move("L", 1)
+
+            self.move("B", 2)
+            self.move("L", 0.3)
+
+            # Door 3 
+            self.move("B", 5)
+            self.move("R", 1)
+            self.move("L", 1)
+
+            # Door 4
+            self.move("B", 5)
+            self.move("R", 0.3)
+            self.move("F", 3)
+            self.move("L", 1)
+            self.move("R", 1)
+
+    
+    def on_enter_MID23_open(self):
+        print("<- MID23 ->")
+        while (not self.R2F()):
+            if self.check_and_handle_pikachu_interrupt():
+                return "STOP"
+            pass
+
+        while True:
+            if self.check_and_handle_pikachu_interrupt():
+                return "STOP"
+            
+            # Door 4
+            self.move("F", 2)
+            self.move("L", 0.3)
+            self.move("F", 3)
+            self.move("L", 1)
+            self.move("R", 1)
+
+            self.move("B", 3)
+            self.move("L", 0.3)
+
+            # Door 2 
+            self.move("F", 5)
+            self.move("R", 1)
+            self.move("L", 1)
+
+            # Door 1
+            self.move("F", 5)
+            self.move("R", 0.3)
+            self.move("F", 3)
+            self.move("R", 1)
+            self.move("L", 1)
+
+    
+    def on_enter_MID24_open(self):
+        print("<- MID24 ->")
+        while (not self.L2F()):
+            if self.check_and_handle_pikachu_interrupt():
+                return "STOP"
+            pass
+
+        # 4 -> 3 -> 2 -> 1
+        while True:
+            if self.check_and_handle_pikachu_interrupt():
+                return "STOP"
+            
+            # Door 3
+            self.move("F", 2)
+            self.move("R", 1)
+            self.move("L", 1)
+
+            # Door 2
+            self.move("F", 2)
+            self.move("R", 1)
+            self.move("L", 1)
+
+            # Door 1
+            self.move("F", 2)
+            self.move("R", 0.3)
+            self.move("F", 3)
+            self.move("R", 1)
+            self.move("L", 1)
+
 
 
     def on_enter_DONE(self):
@@ -1501,7 +1648,7 @@ class Nav2Processing:
         return "STOP"
 
     def on_enter_S2(self):
-        if self.run_sub_state_machine(['L2F', 'F2M', 'R2S', 'R2F', 'R2A', 'F2N']):
+        if self.run_sub_state_machine(['L2F', 'F2M', 'R2S', 'R2F', 'F2N']):
             self.set_main_state("MID12")
         return "STOP"
     
@@ -1521,16 +1668,19 @@ class Nav2Processing:
     def on_enter_D11_2(self): #OK
         if self.run_sub_state_machine(['L2F', 'F2M', 'L2S', 'L2F', 'F2N']):
             self.set_main_state("MID22")
+            # self.set_main_state("MID22_open")
         return "STOP"
     
     def on_enter_D11_3(self): #OK
         if self.run_sub_state_machine(["L2F", "F2M", "L2S", "F2N"]):
             self.set_main_state("MID23")
+            # self.set_main_state("MID23_open")
         return "STOP"
 
     def on_enter_D11_4(self): #OK
         if self.run_sub_state_machine(['R2F', 'L2A', 'F2N', 'L2F', 'F2N']):
             self.set_main_state("MID24")
+            # self.set_main_state("MID24_open")
         return "STOP"
     
 
@@ -1538,50 +1688,61 @@ class Nav2Processing:
     def on_enter_D12_1(self): #OK
         if self.run_sub_state_machine(['F2N', 'R2H', 'F2N', 'R2H', 'F2N']):
             self.set_main_state("MID21")
+            # self.set_main_state("MID21_open")
         return "STOP"
     
     def on_enter_D12_3(self): #OK
-        if self.run_sub_state_machine(['F2M', 'L2S', 'L2F', 'F2N']):
+        if self.run_sub_state_machine(['F2MvCv', 'L2S', 'L2F', 'F2N']):
             self.set_main_state("MID23")
+            # self.set_main_state("MID23_open")
         return "STOP"
 
     def on_enter_D12_4(self): #OK
-        if self.run_sub_state_machine(['F2N', 'R2F', 'F2N', 'L2H', 'F2N', 'L2H', 'F2N']):
+        if self.run_sub_state_machine(['F2N', 'L2F', 'F2N', 'L2H', 'F2N', 'L2H', 'F2N']):
             self.set_main_state("MID24")
+            # self.set_main_state("MID24_open")
         return "STOP"
     
     
     # D13
     def on_enter_D13_1(self): #OK
         self.move("F", 0.2)
+        self.move("L", 0.2)
         if self.run_sub_state_machine(["L2F", "L2A", "F2N", "R2F", "F2N", "R2H"]):
             self.set_main_state("MID21")
+            # self.set_main_state("MID21_open")
         return "STOP"
     
     def on_enter_D13_2(self): #OK
         if self.run_sub_state_machine(['F2MvCv', 'R2S', 'R2A', 'F2N']):
             self.set_main_state("MID22")
+            # self.set_main_state("MID22_open")
         return "STOP"
 
     def on_enter_D13_4(self): #OK
         if self.run_sub_state_machine(['F2Cv', 'R2F', 'F2N', 'L2F', 'F2N']):
             self.set_main_state("MID24")
+            # self.set_main_state("MID24_open")
         return "STOP"
 
 
     # D14
     def on_enter_D14_1(self): #OK
         if self.run_sub_state_machine(['L2F', 'F2N', 'R2H', 'F2N', 'R2H', 'F2N', 'R2H', 'F2N', 'R2H', 'F2N']):
-            self.move("F", 0.5)
+            self.move("F", 0.2)
             self.set_main_state("MID21")
+            # self.set_main_state("MID21_open")
         return "STOP"
         
     def on_enter_D14_2(self): #OK
+        self.move("S", 121)
         if self.run_sub_state_machine(["F2MvCv", "R2M", "R2S", "R2F", "R2A", "F2N"]):
             self.set_main_state("MID22")
+            # self.set_main_state("MID22_open")
         return "STOP"
     
     def on_enter_D14_3(self): #OK
         if self.run_sub_state_machine(["L2F", "F2Cv", "R2F", "F2Cv", "R2M", "R2S", "R2A", "F2N"]):
             self.set_main_state("MID23")
+            # self.set_main_state("MID23_open")
         return "STOP"
